@@ -18,15 +18,15 @@ DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
-# LIVE APP URL (Scannable from any phone without installing apps)
+# LIVE PUBLIC DOMAIN FOR QR SCANNING
 LIVE_APP_URL = "https://epaiqfnt5gkqh8brx.streamlit.app"
 
-# SRI LANKA TIMEZONE FUNCTION (Colombo Time)
+# SRI LANKA TIMEZONE (Asia/Colombo)
 def get_sl_time():
     sl_tz = pytz.timezone('Asia/Colombo')
     return datetime.now(sl_tz).strftime("%Y-%m-%d %I:%M %p")
 
-# DATABASE LOAD & AUTO-MIGRATE OLD JOBS
+# DATABASE LOAD & PERSISTENCE
 def load_data():
     if os.path.exists(DB_FILE):
         try:
@@ -46,21 +46,21 @@ def save_data(data):
     with open(DB_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-if "jobs_db" not in st.session_state:
-    st.session_state.jobs_db = load_data()
+# Always load latest from disk to avoid out-of-sync cache
+current_db = load_data()
+st.session_state.jobs_db = current_db
 
 # =======================================================
-# 1. PUBLIC DIGITAL CERTIFICATE (ACCESSIBLE VIA ANY BROWSER)
+# 1. PUBLIC DIGITAL CERTIFICATE VIEW (OPENED DIRECTLY VIA QR)
 # =======================================================
-query_params = st.query_params
-if "verify_job" in query_params:
-    verified_id = query_params["verify_job"]
-    matched = [j for j in st.session_state.jobs_db if j.get("job_id") == verified_id]
+if "verify_job" in st.query_params:
+    verified_id = st.query_params["verify_job"]
+    matched = [j for j in current_db if str(j.get("job_id")).strip().lower() == str(verified_id).strip().lower()]
     
     if matched:
         job = matched[0]
         
-        # Hide default streamlit header/footer for clean standalone look
+        # Clean mobile view for scanning users
         st.markdown("""
         <style>
             #MainMenu {visibility: hidden;}
@@ -69,13 +69,12 @@ if "verify_job" in query_params:
         </style>
         """, unsafe_allow_html=True)
         
-        # Official Certificate UI
         st.markdown(f"""
-        <div style="background-color: #003366; color: white; padding: 22px; border-radius: 12px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-            <h2 style="margin: 0; color: white; letter-spacing: 1.5px; font-family: sans-serif;">TRADE PROMOTERS LIMITED</h2>
-            <p style="margin: 6px 0 0 0; font-size: 12px; color: #cbd5e1; letter-spacing: 0.5px;">GENERATOR FABRICATION &amp; QA/QC CLEARANCE CERTIFICATE</p>
+        <div style="background-color: #003366; color: white; padding: 22px; border-radius: 12px; text-align: center;">
+            <h2 style="margin: 0; color: white; letter-spacing: 1px;">TRADE PROMOTERS LIMITED</h2>
+            <p style="margin: 6px 0 0 0; font-size: 12px; color: #cbd5e1;">GENERATOR FABRICATION &amp; QA/QC CLEARANCE CERTIFICATE</p>
             <div style="margin-top: 14px;">
-                <span style="background-color: #22c55e; color: white; padding: 6px 18px; border-radius: 20px; font-weight: bold; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">
+                <span style="background-color: #22c55e; color: white; padding: 6px 18px; border-radius: 20px; font-weight: bold; font-size: 13px;">
                     ✓ QUALITY VERIFIED &amp; COMPLETED
                 </span>
             </div>
@@ -83,7 +82,6 @@ if "verify_job" in query_params:
         """, unsafe_allow_html=True)
         
         st.write("")
-        
         col1, col2 = st.columns(2)
         with col1:
             st.info(f"**Job ID:** {job.get('job_id', 'N/A')}\n\n**Lead Worker:** {job.get('worker', 'N/A')}")
@@ -93,31 +91,38 @@ if "verify_job" in query_params:
         st.markdown("#### 📋 Fabrication Scope")
         st.markdown(f"<div style='background-color: #f8fafc; border-left: 5px solid #003366; padding: 12px; border-radius: 6px; font-size: 14px;'>{job.get('desc', 'N/A')}</div>", unsafe_allow_html=True)
         
-        st.markdown("#### 🛠️ Rectifications & Approvals Log")
+        st.markdown("#### 🛠️ Rectifications & Verification History")
         rects = job.get("rectifications", [])
         if not rects:
-            st.success("Clean pass. Inspected and approved without defects.")
+            st.success("Clean pass. Initial inspection passed with zero defects.")
         else:
             for idx, r in enumerate(rects):
                 st.markdown(f"""
-                <div style='background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #22c55e; padding: 12px; border-radius: 6px; margin-bottom: 10px;'>
-                    <b>Issue #{idx+1}:</b> {r.get('defect', '-')}<br/>
-                    <b>Action Taken:</b> {r.get('action', '-')}<br/>
+                <div style='background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #22c55e; padding: 12px; border-radius: 6px; margin-bottom: 12px;'>
+                    <b>Defect #{idx+1}:</b> {r.get('defect', '-')}<br/>
+                    <b>Worker Rectification Action:</b> {r.get('action', '-')}<br/>
                     <b>Status:</b> <span style='color: #15803d; font-weight: bold;'>✓ Cleared &amp; Approved by QC</span>
                 </div>
                 """, unsafe_allow_html=True)
-                if r.get("photo") and os.path.exists(r["photo"]):
-                    st.image(r["photo"], width=220, caption=f"Inspection Photo #{idx+1}")
+                
+                # Show Defect & Fixed Photos side by side if available
+                img_col1, img_col2 = st.columns(2)
+                with img_col1:
+                    if r.get("photo") and os.path.exists(r["photo"]):
+                        st.image(r["photo"], caption="QC Defect Photo", use_container_width=True)
+                with img_col2:
+                    if r.get("fixed_photo") and os.path.exists(r["fixed_photo"]):
+                        st.image(r["fixed_photo"], caption="Worker Fixed Photo", use_container_width=True)
 
         st.caption("Authenticated Digital Quality Record • Trade Promoters Limited QA/QC Division")
         
         st.write("---")
-        if st.button("⬅️ Open Workshop Portal"):
+        if st.button("⬅️ Open Main Workshop Portal"):
             st.query_params.clear()
             st.rerun()
         st.stop()
     else:
-        st.error(f"Job Record '{verified_id}' not found in verification registry.")
+        st.error(f"Job Record '{verified_id}' was not found in the verified database.")
         if st.button("⬅️ Back"):
             st.query_params.clear()
             st.rerun()
@@ -160,9 +165,10 @@ def create_pdf(job, qr_link_url):
     
     rects = job.get("rectifications", [])
     if rects:
-        body_info.append([Paragraph("<b>QC Rectification History &amp; Approval Log:</b>", header_cell)])
+        body_info.append([Paragraph("<b>QC Rectification &amp; Verification Audit Log:</b>", header_cell)])
         for i, r in enumerate(rects):
-            body_info.append([Paragraph(f"<b>#{i+1} Defect:</b> {r.get('defect', '')}<br/><b>Action:</b> {r.get('action', '')} - <font color='green'><b>[QC Approved]</b></font>", cell_style)])
+            has_fixed_img = " [Proof Photo Attached]" if r.get("fixed_photo") else ""
+            body_info.append([Paragraph(f"<b>#{i+1} Defect:</b> {r.get('defect', '')}<br/><b>Action:</b> {r.get('action', '')}{has_fixed_img} - <font color='green'><b>[QC Approved]</b></font>", cell_style)])
     else:
         body_info.append([Paragraph("<b>QC Inspection Status:</b>", header_cell)])
         body_info.append([Paragraph("No defects reported. Inspected and approved to factory standards.", cell_style)])
@@ -259,21 +265,39 @@ with tab1:
                     st.markdown("#### ⚠️ QC Rectification Items:")
                     for idx, r in enumerate(rects):
                         st.markdown(f"**Item #{idx+1}:** {r.get('defect', '')} *(Logged: {r.get('time', 'N/A')})*")
-                        if r.get("photo") and os.path.exists(r["photo"]):
-                            st.image(r["photo"], width=180)
                         
-                        col_w, col_qc = st.columns(2)
-                        with col_w:
+                        # Show QC Defect Photo
+                        if r.get("photo") and os.path.exists(r["photo"]):
+                            st.image(r["photo"], width=180, caption="QC Defect Photo")
+                        
+                        st.markdown("**Worker Rectification & Photo Proof:**")
+                        col_w1, col_w2 = st.columns(2)
+                        with col_w1:
                             w_tick = st.checkbox(f"Worker: Fixed #{idx+1}", value=r.get("worker_done", False), key=f"w_chk_{job.get('job_id')}_{idx}")
                             action_txt = st.text_input(f"Action Taken #{idx+1}", value=r.get("action", ""), key=f"act_{job.get('job_id')}_{idx}", placeholder="e.g. Ground down and re-welded")
                             r["worker_done"] = w_tick
                             r["action"] = action_txt
 
-                        with col_qc:
-                            qc_tick = st.checkbox(f"QC: Verified & Approved #{idx+1}", value=r.get("qc_approved", False), disabled=(not r.get("worker_done", False)), key=f"qc_chk_{job.get('job_id')}_{idx}")
-                            r["qc_approved"] = qc_tick
-                            if not r.get("worker_done", False):
-                                st.caption("*(Awaiting worker fix first)*")
+                        with col_w2:
+                            # Worker uploads photo of the fixed defect
+                            fixed_photo_file = st.file_uploader(f"Upload Fixed Photo #{idx+1}", type=["jpg", "jpeg", "png"], key=f"fixed_img_{job.get('job_id')}_{idx}")
+                            if fixed_photo_file:
+                                fixed_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_fixed_{idx+1}.png")
+                                with open(fixed_path, "wb") as f:
+                                    f.write(fixed_photo_file.getbuffer())
+                                r["fixed_photo"] = fixed_path
+                                st.success("Fixed photo attached!")
+
+                            if r.get("fixed_photo") and os.path.exists(r["fixed_photo"]):
+                                st.image(r["fixed_photo"], width=140, caption="Fixed Proof Photo")
+
+                        # QC Approval Area
+                        st.markdown("**QC Final Verification:**")
+                        qc_tick = st.checkbox(f"QC: Verified & Approved #{idx+1}", value=r.get("qc_approved", False), disabled=(not r.get("worker_done", False)), key=f"qc_chk_{job.get('job_id')}_{idx}")
+                        r["qc_approved"] = qc_tick
+                        if not r.get("worker_done", False):
+                            st.caption("*(Awaiting worker fix & action first)*")
+                        
                         st.divider()
                     
                     save_data(st.session_state.jobs_db)
@@ -321,7 +345,7 @@ with tab1:
                 p_img = qr_preview.make_image(fill_color="black", back_color="white")
                 img_io = io.BytesIO()
                 p_img.save(img_io, format='PNG')
-                st.image(img_io.getvalue(), caption="Scan QR with any phone to view web certificate", width=130)
+                st.image(img_io.getvalue(), caption="Scan QR with any phone to view web certificate", width=140)
                 
                 if st.button(f"👁️ View Digital Certificate ({c_job.get('job_id', '')})", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
                     st.query_params["verify_job"] = c_job.get('job_id', '')
@@ -379,6 +403,7 @@ with tab2:
                 target_job["rectifications"].append({
                     "defect": defect_text.strip(),
                     "photo": photo_path,
+                    "fixed_photo": "",
                     "worker_done": False,
                     "action": "",
                     "qc_approved": False,
