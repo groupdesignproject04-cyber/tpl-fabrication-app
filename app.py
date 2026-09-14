@@ -5,6 +5,7 @@ import pytz
 import io
 import os
 import json
+import base64
 import qrcode
 from PIL import Image
 from reportlab.lib.pagesizes import letter
@@ -18,7 +19,8 @@ DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
-LIVE_APP_URL = "https://epaiqfnt5gkqh8brx.streamlit.app"
+# EXACT DIRECT PUBLIC APP URL (NEVER USES share.streamlit.io)
+PUBLIC_DOMAIN = "https://epaiqfnt5gkqh8brx.streamlit.app"
 
 # SRI LANKA TIMEZONE (Asia/Colombo)
 def get_sl_time():
@@ -50,20 +52,20 @@ def save_data(data):
 current_db = load_data()
 st.session_state.jobs_db = current_db
 
-# Delete Confirmation State
 if "delete_confirm_id" not in st.session_state:
     st.session_state.delete_confirm_id = None
 
 # =======================================================
-# 1. DIGITAL CERTIFICATE VIEW (STANDALONE & IN-APP VIEW)
+# 1. 100% PUBLIC DIGITAL CERTIFICATE (NO LOGIN - PURE HTML VIEW)
 # =======================================================
 if "verify_job" in st.query_params:
     verified_id = st.query_params["verify_job"]
     matched = [j for j in current_db if str(j.get("job_id", "")).strip().lower() == str(verified_id).strip().lower()]
     
+    # Fully stripped UI: No menus, no headers, no login wrappers
     st.markdown("""
     <style>
-        #MainMenu, footer, header, .stDeployButton, [data-testid="stToolbar"] {display: none !important;}
+        #MainMenu, footer, header, .stDeployButton, [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
         .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 680px !important;}
         body {background-color: #f8fafc;}
     </style>
@@ -73,11 +75,11 @@ if "verify_job" in st.query_params:
         job = matched[0]
         
         st.markdown(f"""
-        <div style="background-color: #003366; color: white; padding: 24px 16px; border-radius: 12px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-            <h2 style="margin: 0; color: #ffffff; letter-spacing: 1.5px; font-size: 22px; font-weight: 800;">TRADE PROMOTERS LIMITED</h2>
+        <div style="background-color: #003366; color: white; padding: 22px 14px; border-radius: 12px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.12);">
+            <h2 style="margin: 0; color: #ffffff; letter-spacing: 1.2px; font-size: 21px; font-weight: 800;">TRADE PROMOTERS LIMITED</h2>
             <p style="margin: 5px 0 0 0; font-size: 11px; color: #93c5fd; letter-spacing: 0.8px; text-transform: uppercase;">GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE</p>
-            <div style="margin-top: 14px;">
-                <span style="background-color: #16a34a; color: white; padding: 6px 18px; border-radius: 20px; font-weight: bold; font-size: 12px; display: inline-block;">
+            <div style="margin-top: 12px;">
+                <span style="background-color: #16a34a; color: white; padding: 5px 16px; border-radius: 20px; font-weight: bold; font-size: 12px; display: inline-block;">
                     ✓ QUALITY VERIFIED &amp; COMPLETED
                 </span>
             </div>
@@ -87,7 +89,7 @@ if "verify_job" in st.query_params:
         st.write("")
         
         st.markdown(f"""
-        <div style="background: white; border-radius: 10px; padding: 16px; border: 1px solid #e2e8f0; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <div style="background: white; border-radius: 10px; padding: 14px; border: 1px solid #e2e8f0; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <table style="width: 100%; font-size: 13px; line-height: 1.8;">
                 <tr>
                     <td style="color: #64748b; width: 45%;">Job ID:</td>
@@ -111,7 +113,7 @@ if "verify_job" in st.query_params:
 
         st.markdown("##### 📋 Fabrication Scope")
         st.markdown(f"""
-        <div style="background: white; border-left: 5px solid #003366; border-radius: 6px; padding: 12px 16px; font-size: 13px; color: #1e293b; margin-bottom: 16px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+        <div style="background: white; border-left: 5px solid #003366; border-radius: 6px; padding: 12px 14px; font-size: 13px; color: #1e293b; margin-bottom: 16px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
             {job.get('desc', 'N/A')}
         </div>
         """, unsafe_allow_html=True)
@@ -120,8 +122,8 @@ if "verify_job" in st.query_params:
         rects = job.get("rectifications", [])
         if not rects:
             st.markdown("""
-            <div style="background: #f0fdf4; border-left: 5px solid #16a34a; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #166534;">
-                Clean pass. Initial inspection passed with standard tolerances and zero recorded defects.
+            <div style="background: #f0fdf4; border-left: 5px solid #16a34a; padding: 12px 14px; border-radius: 6px; font-size: 13px; color: #166534;">
+                Clean pass. Initial inspection passed with standard engineering tolerances.
             </div>
             """, unsafe_allow_html=True)
         else:
@@ -144,10 +146,16 @@ if "verify_job" in st.query_params:
         if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
             st.write("")
             st.markdown("##### 🔍 QC Final Clearance Sign-Off")
-            st.image(job["qc_final_approval_photo"], caption="QC Final Clearance Stamp / Photo", use_container_width=True)
+            st.image(job["qc_final_approval_photo"], caption="QC Clearance Photo", use_container_width=True)
+
+        st.markdown("""
+        <div style="text-align: center; font-size: 11px; color: #64748b; margin-top: 25px; border-top: 1px solid #cbd5e1; padding-top: 12px;">
+            Trade Promoters Limited • Generator Installation &amp; QA/QC Division
+        </div>
+        """, unsafe_allow_html=True)
 
         st.write("---")
-        if st.button("⬅️ Back to Workshop Portal"):
+        if st.button("⬅️ Back to Portal"):
             st.query_params.clear()
             st.rerun()
         st.stop()
@@ -252,6 +260,7 @@ def create_pdf(job, qr_link_url):
         except Exception:
             pass
 
+    # Dynamic QR Code (Pure URL)
     qr = qrcode.QRCode(box_size=3, border=1)
     qr.add_data(qr_link_url)
     qr.make(fit=True)
@@ -260,6 +269,7 @@ def create_pdf(job, qr_link_url):
     qr_img.save(qr_buf, format="PNG")
     qr_buf.seek(0)
 
+    # Signatures
     sig_info = [
         [RLImage(qr_buf, width=75, height=75), 
          Paragraph("___________________________<br/><br/><b>Workshop Engineer</b>", cell_style),
@@ -332,7 +342,7 @@ else:
             st.write(f"**Description:** {job.get('desc', '')}")
             st.caption(f"Started: {job.get('start_time', '')}")
 
-            # SECTION A: RECTIFICATIONS LIST
+            # RECTIFICATIONS LIST
             if rects:
                 st.markdown("#### ⚠️ QC Rectification Issues:")
                 for idx, r in enumerate(rects):
@@ -363,7 +373,7 @@ else:
             else:
                 st.success("No defects logged yet. Work progressing normally.")
 
-            # SECTION B: QC ADDS DEFECT
+            # QC LOG COMMENT
             st.markdown("#### 🔍 QC Inspector: Log Comment / Defect for this Job")
             with st.form(f"qc_add_defect_{job.get('job_id')}", clear_on_submit=True):
                 defect_text = st.text_area("Defect / Rectification Note", placeholder="Describe issue: weld gap, misaligned holes, paint run...", key=f"def_txt_{job.get('job_id')}")
@@ -390,7 +400,7 @@ else:
                     st.success(f"Rectification issue added to {job.get('job_id')}!")
                     st.rerun()
 
-            # SECTION C: QC FINAL APPROVAL PHOTO GATE
+            # QC APPROVAL PHOTO GATE
             st.write("---")
             st.markdown("#### 🛡️ QC Final Clearance Photo (Required for Job Completion)")
             qc_appr_file = st.file_uploader(f"📸 Upload QC Approval Photo / Sign ({job.get('job_id')})", type=["jpg", "jpeg", "png"], key=f"qc_appr_{job.get('job_id')}")
@@ -406,7 +416,7 @@ else:
             if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
                 st.image(job["qc_final_approval_photo"], width=200, caption="Verified QC Approval Photo")
 
-            # SECTION D: COMPLETION & SUBMIT GATE
+            # SUBMIT GATE
             st.write("---")
             can_complete = all_worker_fixed and qc_photo_uploaded
             
@@ -431,7 +441,7 @@ else:
                     else:
                         st.warning("Please tick the completion checkbox above before submitting.")
 
-            # SECTION E: DELETE WITH CONFIRMATION (ACTIVE JOBS)
+            # DELETE WITH CONFIRMATION
             st.write("---")
             act_del_key = f"active_{job.get('job_id')}"
             
@@ -469,8 +479,10 @@ else:
             st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
             st.write(f"**Rectifications Cleared:** {len(c_rects)} items.")
             
-            live_qr_url = f"{LIVE_APP_URL}/?verify_job={c_job.get('job_id', '')}"
+            # EXACT DIRECT PUBLIC LINK (Scannable by anyone)
+            direct_qr_url = f"{PUBLIC_DOMAIN}/?verify_job={c_job.get('job_id', '')}"
             
+            # Action Buttons
             btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.5, 1])
             with btn_col1:
                 if st.button(f"👁️ View Certificate", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
@@ -478,7 +490,7 @@ else:
                     st.rerun()
 
             with btn_col2:
-                pdf_bytes = create_pdf(c_job, live_qr_url)
+                pdf_bytes = create_pdf(c_job, direct_qr_url)
                 st.download_button(
                     label=f"📄 Print PDF Certificate",
                     data=pdf_bytes,
@@ -493,7 +505,7 @@ else:
                     st.session_state.delete_confirm_id = comp_del_key
                     st.rerun()
 
-            # Confirmation Box for Completed Jobs
+            # Delete Confirmation Box
             if st.session_state.delete_confirm_id == f"completed_{c_job.get('job_id')}":
                 st.write("")
                 st.error(f"⚠️ Are you sure you want to delete completed record **{c_job.get('job_id')}**?")
