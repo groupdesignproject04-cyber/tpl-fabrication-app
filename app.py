@@ -5,6 +5,7 @@ import pytz
 import io
 import os
 import json
+import base64
 import qrcode
 from PIL import Image
 from reportlab.lib.pagesizes import letter
@@ -16,9 +17,9 @@ st.set_page_config(page_title="TPL QA/QC Fabrication System", layout="centered",
 
 DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
+CERT_DIR = "generated_certificates"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
-
-LIVE_APP_URL = "https://epaiqfnt5gkqh8brx.streamlit.app"
+os.makedirs(CERT_DIR, exist_ok=True)
 
 # SRI LANKA TIMEZONE (Asia/Colombo)
 def get_sl_time():
@@ -50,8 +51,18 @@ def save_data(data):
 current_db = load_data()
 st.session_state.jobs_db = current_db
 
+# Helper to encode images for HTML Certificate
+def img_to_b64(path):
+    if path and os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                return f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+        except Exception:
+            return ""
+    return ""
+
 # =======================================================
-# 1. PUBLIC DIGITAL CERTIFICATE VIEW (ZERO LOGIN QR SCAN)
+# 1. PUBLIC DIGITAL CERTIFICATE (ZERO-LOGIN AUTO-DISPLAY)
 # =======================================================
 if "verify_job" in st.query_params:
     verified_id = st.query_params["verify_job"]
@@ -60,7 +71,7 @@ if "verify_job" in st.query_params:
     st.markdown("""
     <style>
         #MainMenu, footer, header, .stDeployButton, [data-testid="stToolbar"] {display: none !important;}
-        .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 680px !important;}
+        .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 650px !important;}
         body {background-color: #f8fafc;}
     </style>
     """, unsafe_allow_html=True)
@@ -69,12 +80,12 @@ if "verify_job" in st.query_params:
         job = matched[0]
         
         st.markdown(f"""
-        <div style="background-color: #003366; color: white; padding: 24px 16px; border-radius: 12px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-            <h2 style="margin: 0; color: #ffffff; letter-spacing: 1.5px; font-size: 22px; font-weight: 800;">TRADE PROMOTERS LIMITED</h2>
-            <p style="margin: 5px 0 0 0; font-size: 11px; color: #93c5fd; letter-spacing: 0.8px; text-transform: uppercase;">GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE</p>
-            <div style="margin-top: 14px;">
-                <span style="background-color: #16a34a; color: white; padding: 6px 18px; border-radius: 20px; font-weight: bold; font-size: 12px; display: inline-block;">
-                    ✓ QUALITY VERIFIED &amp; COMPLETED
+        <div style="background-color: #003366; color: white; padding: 22px; border-radius: 12px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.15);">
+            <h2 style="margin: 0; color: #ffffff; letter-spacing: 1.5px; font-size: 20px; font-weight: 800;">TRADE PROMOTERS LIMITED</h2>
+            <p style="margin: 5px 0 0 0; font-size: 11px; color: #93c5fd; letter-spacing: 0.8px; text-transform: uppercase;">OFFICIAL GENERATOR QA/QC DIGITAL CERTIFICATE</p>
+            <div style="margin-top: 12px;">
+                <span style="background-color: #16a34a; color: white; padding: 5px 16px; border-radius: 20px; font-weight: bold; font-size: 12px; display: inline-block;">
+                    ✓ AUTHENTIC &amp; QUALITY VERIFIED
                 </span>
             </div>
         </div>
@@ -83,7 +94,7 @@ if "verify_job" in st.query_params:
         st.write("")
         
         st.markdown(f"""
-        <div style="background: white; border-radius: 10px; padding: 16px; border: 1px solid #e2e8f0; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <div style="background: white; border-radius: 10px; padding: 14px; border: 1px solid #e2e8f0; margin-bottom: 12px;">
             <table style="width: 100%; font-size: 13px; line-height: 1.8;">
                 <tr>
                     <td style="color: #64748b; width: 45%;">Job ID:</td>
@@ -107,7 +118,7 @@ if "verify_job" in st.query_params:
 
         st.markdown("##### 📋 Fabrication Scope")
         st.markdown(f"""
-        <div style="background: white; border-left: 5px solid #003366; border-radius: 6px; padding: 12px 16px; font-size: 13px; color: #1e293b; margin-bottom: 16px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+        <div style="background: white; border-left: 5px solid #003366; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #1e293b; margin-bottom: 14px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
             {job.get('desc', 'N/A')}
         </div>
         """, unsafe_allow_html=True)
@@ -116,15 +127,15 @@ if "verify_job" in st.query_params:
         rects = job.get("rectifications", [])
         if not rects:
             st.markdown("""
-            <div style="background: #f0fdf4; border-left: 5px solid #16a34a; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #166534;">
-                Clean pass. Initial inspection passed with standard tolerances and zero recorded defects.
+            <div style="background: #f0fdf4; border-left: 5px solid #16a34a; padding: 10px 14px; border-radius: 6px; font-size: 13px; color: #166534;">
+                Clean pass. All fabrication parameters satisfied standard engineering specifications on initial inspection.
             </div>
             """, unsafe_allow_html=True)
         else:
             for idx, r in enumerate(rects):
                 st.markdown(f"""
-                <div style="background: white; border: 1px solid #e2e8f0; border-left: 5px solid #16a34a; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
-                    <div style="font-size: 13px; font-weight: bold; color: #991b1b; margin-bottom: 4px;">Defect #{idx+1}: {r.get('defect', '-')}</div>
+                <div style="background: white; border: 1px solid #e2e8f0; border-left: 5px solid #16a34a; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px;">
+                    <div style="font-size: 13px; font-weight: bold; color: #991b1b; margin-bottom: 3px;">Defect #{idx+1}: {r.get('defect', '-')}</div>
                     <div style="font-size: 13px; color: #166534; font-weight: 500;">✓ Action Taken: {r.get('action', '-')}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -143,7 +154,7 @@ if "verify_job" in st.query_params:
             st.image(job["qc_final_approval_photo"], caption="QC Final Clearance Stamp / Photo", use_container_width=True)
 
         st.markdown("""
-        <div style="text-align: center; font-size: 11px; color: #64748b; margin-top: 25px; border-top: 1px solid #cbd5e1; padding-top: 15px;">
+        <div style="text-align: center; font-size: 11px; color: #64748b; margin-top: 20px; border-top: 1px solid #cbd5e1; padding-top: 12px;">
             Digitally Authenticated Certificate • Trade Promoters Limited<br>
             Quality Assurance &amp; Generator Installation Division
         </div>
@@ -155,7 +166,76 @@ if "verify_job" in st.query_params:
         st.stop()
 
 # =======================================================
-# 2. MATCHED PDF GENERATOR (INCLUDES ALL PHOTOS & SIGNATURES)
+# 2. AUTO DIGITAL CERTIFICATE HTML GENERATOR
+# =======================================================
+def generate_html_certificate(job, qr_data_url):
+    rects = job.get("rectifications", [])
+    rect_html = ""
+    if not rects:
+        rect_html = '<div style="background:#f0fdf4; border-left:4px solid #16a34a; padding:10px; font-size:12px; color:#166534;">Clean pass. No defects reported. Inspected and approved to engineering standards.</div>'
+    else:
+        for idx, r in enumerate(rects):
+            d_b64 = img_to_b64(r.get("photo"))
+            f_b64 = img_to_b64(r.get("fixed_photo"))
+            d_img = f'<img src="{d_b64}" style="max-width:140px; border-radius:4px; border:1px solid #ccc; margin-top:5px;"><br><small>Defect Photo</small>' if d_b64 else ''
+            f_img = f'<img src="{f_b64}" style="max-width:140px; border-radius:4px; border:1px solid #ccc; margin-top:5px;"><br><small>Worker Proof</small>' if f_b64 else ''
+            
+            rect_html += f"""
+            <div style="border:1px solid #e2e8f0; border-left:4px solid #16a34a; padding:8px 12px; border-radius:4px; margin-bottom:8px; font-size:12px;">
+                <b style="color:#b91c1c;">Issue #{idx+1}:</b> {r.get('defect', '-')}<br>
+                <b style="color:#15803d;">Action:</b> {r.get('action', '-')}<br>
+                <table style="margin-top:6px;"><tr><td style="padding-right:10px;">{d_img}</td><td>{f_img}</td></tr></table>
+            </div>
+            """
+
+    qc_appr_b64 = img_to_b64(job.get("qc_final_approval_photo"))
+    qc_appr_html = f'<div style="margin-top:10px;"><b>QC Clearance Photo:</b><br><img src="{qc_appr_b64}" style="max-width:200px; border-radius:4px; border:1px solid #ccc; margin-top:4px;"></div>' if qc_appr_b64 else ''
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TPL Digital Certificate - {job.get('job_id')}</title>
+<style>
+    body {{ font-family: Arial, sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #0f172a; }}
+    .card {{ background: white; max-width: 600px; margin: auto; border: 2px solid #003366; border-radius: 10px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
+    .hdr {{ background: #003366; color: white; text-align: center; padding: 15px; border-radius: 6px; margin-bottom: 15px; }}
+    .badge {{ background: #16a34a; color: white; padding: 4px 14px; border-radius: 15px; font-size: 11px; font-weight: bold; display: inline-block; margin-top: 8px; }}
+    table {{ width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse; }}
+    .scope {{ background: #f8fafc; border-left: 4px solid #003366; padding: 8px 12px; font-size: 12px; margin-bottom: 12px; }}
+</style>
+</head>
+<body>
+<div class="card">
+    <div class="hdr">
+        <h2 style="margin:0; font-size:18px;">TRADE PROMOTERS LIMITED</h2>
+        <div style="font-size:10px; color:#93c5fd; margin-top:3px;">GENERATOR FABRICATION QA/QC DIGITAL CERTIFICATE</div>
+        <div class="badge">✓ VERIFIED & COMPLETED</div>
+    </div>
+    <table style="margin-bottom:12px;">
+        <tr><td style="color:#64748b;">Job ID:</td><td><b>{job.get('job_id')}</b></td></tr>
+        <tr><td style="color:#64748b;">Worker:</td><td><b>{job.get('worker')}</b></td></tr>
+        <tr><td style="color:#64748b;">Started:</td><td>{job.get('start_time')}</td></tr>
+        <tr><td style="color:#64748b;">Completed:</td><td style="color:#16a34a; font-weight:bold;">{job.get('completed_time')}</td></tr>
+    </table>
+    <div style="font-weight:bold; font-size:12px; margin-bottom:4px;">Fabrication Scope:</div>
+    <div class="scope">{job.get('desc')}</div>
+    <div style="font-weight:bold; font-size:12px; margin-bottom:4px;">QC Rectification & Clearance Log:</div>
+    {rect_html}
+    {qc_appr_html}
+    <div style="text-align:center; margin-top:20px; border-top:1px solid #e2e8f0; padding-top:12px;">
+        <img src="{qr_data_url}" width="90" height="90"><br>
+        <small style="color:#64748b; font-size:10px;">Scanned Verification Record • Trade Promoters Limited</small>
+    </div>
+</div>
+</body>
+</html>
+"""
+    return html_content
+
+# =======================================================
+# 3. PDF GENERATOR
 # =======================================================
 def create_pdf(job, qr_link_url):
     buffer = io.BytesIO()
@@ -171,7 +251,6 @@ def create_pdf(job, qr_link_url):
     elements.append(Paragraph("TRADE PROMOTERS LIMITED", title_style))
     elements.append(Paragraph("GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE", sub_style))
 
-    # Basic Info Table
     job_info = [
         [Paragraph(f"<b>Job ID:</b> {job.get('job_id', '')}", cell_style), Paragraph(f"<b>Start Date/Time:</b> {job.get('start_time', '')}", cell_style)],
         [Paragraph(f"<b>Lead Worker:</b> {job.get('worker', '')}", cell_style), Paragraph(f"<b>Completed Time:</b> {job.get('completed_time', 'N/A')}", cell_style)]
@@ -185,7 +264,6 @@ def create_pdf(job, qr_link_url):
     elements.append(t1)
     elements.append(Spacer(1, 8))
 
-    # Scope of Work Table
     scope_info = [
         [Paragraph("<b>Job Scope / Fabrication Details:</b>", header_cell)],
         [Paragraph(job.get('desc', ''), cell_style)]
@@ -199,20 +277,18 @@ def create_pdf(job, qr_link_url):
     elements.append(t_scope)
     elements.append(Spacer(1, 8))
 
-    # Rectifications & Photos Table
     rects = job.get("rectifications", [])
     if rects:
         rect_rows = [[Paragraph("<b>QC Rectification Audit Log &amp; Photo Proofs:</b>", header_cell)]]
         for i, r in enumerate(rects):
             rect_rows.append([Paragraph(f"<b>Issue #{i+1}:</b> {r.get('defect', '')}<br/><b>Worker Action:</b> {r.get('action', '')} - <font color='green'><b>[Fixed &amp; Cleared]</b></font>", cell_style)])
             
-            # Embed Photos side by side if available
             photo_cells = []
             if r.get("photo") and os.path.exists(r["photo"]):
                 try:
                     photo_cells.append(RLImage(r["photo"], width=130, height=95))
                 except Exception:
-                    photo_cells.append(Paragraph("[Defect Photo Attached]", cell_style))
+                    photo_cells.append(Paragraph("[Defect Photo]", cell_style))
             else:
                 photo_cells.append(Paragraph("No Defect Photo", cell_style))
 
@@ -220,7 +296,7 @@ def create_pdf(job, qr_link_url):
                 try:
                     photo_cells.append(RLImage(r["fixed_photo"], width=130, height=95))
                 except Exception:
-                    photo_cells.append(Paragraph("[Fixed Proof Photo Attached]", cell_style))
+                    photo_cells.append(Paragraph("[Fixed Proof]", cell_style))
             else:
                 photo_cells.append(Paragraph("No Fixed Photo", cell_style))
 
@@ -242,7 +318,6 @@ def create_pdf(job, qr_link_url):
         elements.append(pass_table)
         elements.append(Spacer(1, 8))
 
-    # QC Approval Photo in PDF
     if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
         try:
             qc_img = RLImage(job["qc_final_approval_photo"], width=150, height=105)
@@ -253,7 +328,6 @@ def create_pdf(job, qr_link_url):
         except Exception:
             pass
 
-    # Dynamic QR Code
     qr = qrcode.QRCode(box_size=3, border=1)
     qr.add_data(qr_link_url)
     qr.make(fit=True)
@@ -262,7 +336,6 @@ def create_pdf(job, qr_link_url):
     qr_img.save(qr_buf, format="PNG")
     qr_buf.seek(0)
 
-    # Signatures Block
     sig_info = [
         [RLImage(qr_buf, width=75, height=75), 
          Paragraph("___________________________<br/><b>Fabrication Engineer</b><br/><font size=7 color='#666'>Trade Promoters Limited</font>", cell_style),
@@ -280,12 +353,17 @@ def create_pdf(job, qr_link_url):
     buffer.seek(0)
     return buffer
 
+# Helper: Get current live app origin dynamically
+def get_clean_app_url():
+    # If custom domain or streamlit app, build clean base URL
+    return "https://epaiqfnt5gkqh8brx.streamlit.app"
+
 # =======================================================
-# 3. UNIFIED SINGLE WORKSPACE (NO TABS)
+# 4. MAIN WORKSHOP & QC WORKSPACE
 # =======================================================
 st.title("⚡ TPL Generator Fabrication & QA/QC Portal")
 
-# 1. ASSIGN NEW JOB
+# 1. ASSIGN JOB
 st.subheader("1. Assign New Fabrication Job")
 current_sl_time = get_sl_time()
 
@@ -312,7 +390,7 @@ with st.form("assign_job_form", clear_on_submit=True):
 
 st.write("---")
 
-# 2. ACTIVE JOBS (LIVE RECTIFICATION & COMPLETION IN SAME CARD)
+# 2. ACTIVE JOBS
 st.subheader("2. Ongoing Fabrication & QC Inspection Pipeline")
 
 active_jobs = [j for j in st.session_state.jobs_db if j.get("status") != "Completed"]
@@ -335,7 +413,7 @@ else:
             st.write(f"**Description:** {job.get('desc', '')}")
             st.caption(f"Started: {job.get('start_time', '')}")
 
-            # SECTION A: RECTIFICATIONS LIST (IF ANY)
+            # RECTIFICATIONS
             if rects:
                 st.markdown("#### ⚠️ QC Rectification Issues:")
                 for idx, r in enumerate(rects):
@@ -366,11 +444,11 @@ else:
             else:
                 st.success("No defects logged yet. Work progressing normally.")
 
-            # SECTION B: QC ADDS DEFECT DIRECTLY UNDER THIS JOB
-            st.markdown("#### 🔍 QC Inspector: Log Comment / Defect for this Job")
+            # QC ADDS DEFECT
+            st.markdown("#### 🔍 QC Inspector: Log Defect")
             with st.form(f"qc_add_defect_{job.get('job_id')}", clear_on_submit=True):
                 defect_text = st.text_area("Defect / Rectification Note", placeholder="Describe issue: weld gap, misaligned holes, paint run...", key=f"def_txt_{job.get('job_id')}")
-                photo_file = st.file_uploader("Upload Inspection / Defect Photo (Optional)", type=["jpg", "jpeg", "png"], key=f"def_img_{job.get('job_id')}")
+                photo_file = st.file_uploader("Upload Defect Photo (Optional)", type=["jpg", "jpeg", "png"], key=f"def_img_{job.get('job_id')}")
                 add_defect_btn = st.form_submit_button("➕ Submit Rectification Issue")
                 
                 if add_defect_btn and defect_text:
@@ -393,9 +471,9 @@ else:
                     st.success(f"Rectification issue added to {job.get('job_id')}!")
                     st.rerun()
 
-            # SECTION C: QC FINAL APPROVAL PHOTO GATE
+            # QC APPROVAL PHOTO
             st.write("---")
-            st.markdown("#### 🛡️ QC Final Clearance Photo (Required for Job Completion)")
+            st.markdown("#### 🛡️ QC Final Clearance Photo (Required for Completion)")
             qc_appr_file = st.file_uploader(f"📸 Upload QC Approval Photo / Sign ({job.get('job_id')})", type=["jpg", "jpeg", "png"], key=f"qc_appr_{job.get('job_id')}")
             if qc_appr_file:
                 appr_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_qc_approval.png")
@@ -403,20 +481,20 @@ else:
                     f.write(qc_appr_file.getbuffer())
                 job["qc_final_approval_photo"] = appr_path
                 save_data(st.session_state.jobs_db)
-                st.success("QC Final Approval Photo successfully attached!")
+                st.success("QC Final Approval Photo attached!")
                 st.rerun()
 
             if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
                 st.image(job["qc_final_approval_photo"], width=200, caption="Verified QC Approval Photo")
 
-            # SECTION D: COMPLETION & SUBMIT GATE
+            # COMPLETE & SUBMIT
             st.write("---")
             can_complete = all_worker_fixed and qc_photo_uploaded
             
             if not can_complete:
                 missing_items = []
                 if not all_worker_fixed:
-                    missing_items.append("Worker must mark all defects as Fixed")
+                    missing_items.append("Worker must mark defects as Fixed")
                 if not qc_photo_uploaded:
                     missing_items.append("QC Approval Photo must be uploaded")
                 st.warning(f"🔒 Completion Locked: {', and '.join(missing_items)}.")
@@ -429,7 +507,7 @@ else:
                         job["status"] = "Completed"
                         job["completed_time"] = get_sl_time()
                         save_data(st.session_state.jobs_db)
-                        st.success(f"Job {job.get('job_id')} COMPLETED successfully!")
+                        st.success(f"Job {job.get('job_id')} COMPLETED! Auto-generated Certificate & PDF are ready below.")
                         st.rerun()
                     else:
                         st.warning("Please tick the completion checkbox above before submitting.")
@@ -449,8 +527,8 @@ else:
             st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
             st.write(f"**Rectifications Cleared:** {len(c_rects)} items.")
             
-            # Public Direct Verification Link
-            live_qr_url = f"{LIVE_APP_URL}/?verify_job={c_job.get('job_id', '')}"
+            # Universal Dynamic Clean QR URL
+            live_qr_url = f"https://epaiqfnt5gkqh8brx.streamlit.app/?verify_job={c_job.get('job_id', '')}"
             
             qr_preview = qrcode.QRCode(box_size=3, border=1)
             qr_preview.add_data(live_qr_url)
@@ -460,15 +538,30 @@ else:
             p_img.save(img_io, format='PNG')
             st.image(img_io.getvalue(), caption="Scan QR with any phone to view web certificate", width=140)
 
-            pdf_bytes = create_pdf(c_job, live_qr_url)
-            st.download_button(
-                label=f"📄 Download / Print PDF Certificate ({c_job.get('job_id', '')})",
-                data=pdf_bytes,
-                file_name=f"TPL_{c_job.get('job_id', '')}_Certificate.pdf",
-                mime="application/pdf",
-                key=f"dl_{c_job.get('job_id', '')}_{c_idx}"
-            )
+            # Auto-Generated HTML Digital Certificate
+            qr_b64 = f"data:image/png;base64,{base64.b64encode(img_io.getvalue()).decode()}"
+            html_cert = generate_html_certificate(c_job, qr_b64)
             
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                pdf_bytes = create_pdf(c_job, live_qr_url)
+                st.download_button(
+                    label=f"📄 Download / Print PDF ({c_job.get('job_id', '')})",
+                    data=pdf_bytes,
+                    file_name=f"TPL_{c_job.get('job_id', '')}_Certificate.pdf",
+                    mime="application/pdf",
+                    key=f"dl_pdf_{c_job.get('job_id', '')}_{c_idx}"
+                )
+            with col_d2:
+                # Direct Download / Open Digital Certificate
+                st.download_button(
+                    label=f"🌐 Download Digital Certificate HTML ({c_job.get('job_id', '')})",
+                    data=html_cert,
+                    file_name=f"TPL_{c_job.get('job_id', '')}_DigitalCertificate.html",
+                    mime="text/html",
+                    key=f"dl_html_{c_job.get('job_id', '')}_{c_idx}"
+                )
+
             if st.button(f"🗑️ Delete Record ({c_job.get('job_id', '')})", key=f"del_{c_job.get('job_id', '')}_{c_idx}"):
                 st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != c_job.get("job_id")]
                 save_data(st.session_state.jobs_db)
