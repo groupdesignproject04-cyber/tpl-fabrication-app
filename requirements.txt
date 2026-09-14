@@ -4,3 +4,4 @@ reportlab
 qrcode
 Pillow
 pytz
+requests
