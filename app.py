@@ -1,363 +1,569 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import pytz
 import io
 import os
-import sqlite3
-import hashlib
+import json
+import base64
 import qrcode
 from PIL import Image
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="TPL QA/QC Tracker", layout="centered", page_icon="⚡")
+st.set_page_config(page_title="TPL QA/QC Fabrication System", layout="centered", page_icon="⚡")
 
-# ------------------------------------------------------------------
-# CONFIG
-# ------------------------------------------------------------------
-DB_PATH = "tpl_jobs.db"
-PHOTO_DIR = "qc_photos"
-os.makedirs(PHOTO_DIR, exist_ok=True)
+DB_FILE = "tpl_jobs_database.json"
+PHOTOS_DIR = "uploaded_photos"
+CERTS_DIR = "static_certs"
+os.makedirs(PHOTOS_DIR, exist_ok=True)
+os.makedirs(CERTS_DIR, exist_ok=True)
 
-# Simple credential store: username -> sha256(password)
-# Change these before real use, or better, move to st.secrets["users"]
-USERS = {
-    "admin": hashlib.sha256("admin123".encode()).hexdigest(),
-    "qc": hashlib.sha256("qc123".encode()).hexdigest(),
-}
+PUBLIC_DOMAIN = "https://epaiqfnt5gkqh8brx.streamlit.app"
 
-# ------------------------------------------------------------------
-# 1. DATABASE LAYER (SQLite -> fixes "no persistence" + gives basic
-#    write locking for free, since SQLite serializes writes)
-# ------------------------------------------------------------------
-def get_conn():
-    # timeout lets a second writer wait instead of instantly failing
-    # if another session is mid-write (basic concurrency safety)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL;")  # better concurrent read/write
-    conn.row_factory = sqlite3.Row
-    return conn
+# SRI LANKA TIMEZONE (Asia/Colombo)
+def get_sl_time():
+    sl_tz = pytz.timezone('Asia/Colombo')
+    return datetime.now(sl_tz).strftime("%Y-%m-%d %I:%M %p")
 
+# DATABASE PERSISTENCE
+def load_data():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r") as f:
+                data = json.load(f)
+                for j in data:
+                    if "rectifications" not in j:
+                        j["rectifications"] = []
+                    if "status" not in j:
+                        j["status"] = "In Progress"
+                    if "qc_final_approval_photo" not in j:
+                        j["qc_final_approval_photo"] = ""
+                return data
+        except Exception:
+            return []
+    return []
 
-def init_db():
-    conn = get_conn()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS jobs (
-            job_id TEXT PRIMARY KEY,
-            desc TEXT,
-            worker TEXT,
-            start_time TEXT,
-            status TEXT,
-            qc_defect TEXT,
-            rectification TEXT,
-            qc_photo_path TEXT,
-            updated_by TEXT,
-            updated_at TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+def save_data(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
+current_db = load_data()
+st.session_state.jobs_db = current_db
 
-def seed_if_empty():
-    conn = get_conn()
-    row = conn.execute("SELECT COUNT(*) as c FROM jobs").fetchone()
-    if row["c"] == 0:
-        conn.execute("""
-            INSERT INTO jobs (job_id, desc, worker, start_time, status,
-                               qc_defect, rectification, qc_photo_path,
-                               updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            "TPL-GEN-001",
-            "Soundproof canopy sheet bending & box frame welding (250kVA)",
-            "Kamal Perera",
-            "2026-09-14 08:30 AM",
-            "In Progress",
-            "Minor gap on bottom seam",
-            "Re-welded & ground smooth",
-            None,
-            "system",
-            datetime.now().isoformat(timespec="seconds"),
-        ))
-        conn.commit()
-    conn.close()
+if "delete_confirm_id" not in st.session_state:
+    st.session_state.delete_confirm_id = None
 
+# HELPER: Convert image file to base64 for embedding directly inside HTML/QR view
+def get_base64_img(img_path):
+    if img_path and os.path.exists(img_path):
+        try:
+            with open(img_path, "rb") as f:
+                return f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+        except Exception:
+            return ""
+    return ""
 
-def add_job(job_id, desc, worker, start_time, user):
-    conn = get_conn()
-    try:
-        conn.execute("""
-            INSERT INTO jobs (job_id, desc, worker, start_time, status,
-                               qc_defect, rectification, qc_photo_path,
-                               updated_by, updated_at)
-            VALUES (?, ?, ?, ?, 'In Progress', '', '', NULL, ?, ?)
-        """, (job_id, desc, worker, start_time, user,
-              datetime.now().isoformat(timespec="seconds")))
-        conn.commit()
-        return True, None
-    except sqlite3.IntegrityError:
-        return False, "Job ID already exists. Choose a unique Job ID."
-    finally:
-        conn.close()
+# =======================================================
+# 1. PUBLIC DIGITAL CERTIFICATE DISPLAY (ZERO LOGIN REQUIRED)
+# =======================================================
+# Checks both query params (?verify_job=ID) and route parameter
+verify_id = st.query_params.get("verify_job")
 
+if verify_id:
+    # Match Job
+    clean_id = str(verify_id).strip().lower()
+    matched = [j for j in current_db if str(j.get("job_id", "")).strip().lower() == clean_id]
+    
+    st.markdown("""
+    <style>
+        #MainMenu, footer, header, .stDeployButton, [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
+        .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 680px !important;}
+        body {background-color: #f8fafc;}
+    </style>
+    """, unsafe_allow_html=True)
+    
+    if matched:
+        job = matched[0]
+        
+        # Blue Header Banner
+        st.markdown(f"""
+        <div style="background-color: #003366; color: white; padding: 22px 14px; border-radius: 12px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.12);">
+            <h2 style="margin: 0; color: #ffffff; letter-spacing: 1.2px; font-size: 21px; font-weight: 800;">TRADE PROMOTERS LIMITED</h2>
+            <p style="margin: 5px 0 0 0; font-size: 11px; color: #93c5fd; letter-spacing: 0.8px; text-transform: uppercase;">GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE</p>
+            <div style="margin-top: 12px;">
+                <span style="background-color: #16a34a; color: white; padding: 5px 16px; border-radius: 20px; font-weight: bold; font-size: 12px; display: inline-block;">
+                    ✓ AUTHENTICATED &amp; QUALITY VERIFIED
+                </span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.write("")
+        
+        # Details Card
+        st.markdown(f"""
+        <div style="background: white; border-radius: 10px; padding: 14px; border: 1px solid #e2e8f0; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <table style="width: 100%; font-size: 13px; line-height: 1.8;">
+                <tr>
+                    <td style="color: #64748b; width: 45%;">Job ID:</td>
+                    <td style="font-weight: bold; color: #0f172a;">{job.get('job_id', 'N/A')}</td>
+                </tr>
+                <tr>
+                    <td style="color: #64748b;">Fabrication Lead:</td>
+                    <td style="font-weight: bold; color: #0f172a;">{job.get('worker', 'N/A')}</td>
+                </tr>
+                <tr>
+                    <td style="color: #64748b;">Started Date/Time:</td>
+                    <td style="color: #0f172a;">{job.get('start_time', 'N/A')}</td>
+                </tr>
+                <tr>
+                    <td style="color: #64748b;">Completed Date/Time:</td>
+                    <td style="color: #16a34a; font-weight: bold;">{job.get('completed_time', 'N/A')}</td>
+                </tr>
+            </table>
+        </div>
+        """, unsafe_allow_html=True)
 
-def get_jobs(status_filter=None):
-    conn = get_conn()
-    if status_filter == "active":
-        rows = conn.execute("SELECT * FROM jobs WHERE status != 'Completed'").fetchall()
-    elif status_filter == "completed":
-        rows = conn.execute("SELECT * FROM jobs WHERE status = 'Completed'").fetchall()
+        st.markdown("##### 📋 Fabrication Scope")
+        st.markdown(f"""
+        <div style="background: white; border-radius: 6px; padding: 12px 14px; font-size: 13px; color: #1e293b; margin-bottom: 16px; border: 1px solid #e2e8f0; border-left: 5px solid #003366;">
+            {job.get('desc', 'N/A')}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("##### 🛠️ QC Rectifications & Clearances")
+        rects = job.get("rectifications", [])
+        if not rects:
+            st.markdown("""
+            <div style="background: #f0fdf4; border-left: 5px solid #16a34a; padding: 12px 14px; border-radius: 6px; font-size: 13px; color: #166534;">
+                Clean pass. Initial inspection passed with standard engineering tolerances.
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            for idx, r in enumerate(rects):
+                st.markdown(f"""
+                <div style="background: white; border: 1px solid #e2e8f0; border-left: 5px solid #16a34a; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+                    <div style="font-size: 13px; font-weight: bold; color: #991b1b; margin-bottom: 4px;">Defect #{idx+1}: {r.get('defect', '-')}</div>
+                    <div style="font-size: 13px; color: #166534; font-weight: 500;">✓ Action Taken: {r.get('action', '-')}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    if r.get("photo") and os.path.exists(r["photo"]):
+                        st.image(r["photo"], caption=f"Defect Photo #{idx+1}", use_container_width=True)
+                with col_p2:
+                    if r.get("fixed_photo") and os.path.exists(r["fixed_photo"]):
+                        st.image(r["fixed_photo"], caption=f"Worker Proof #{idx+1}", use_container_width=True)
+
+        if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
+            st.write("")
+            st.markdown("##### 🔍 QC Final Clearance Sign-Off")
+            st.image(job["qc_final_approval_photo"], caption="QC Clearance Photo", use_container_width=True)
+
+        st.markdown("""
+        <div style="text-align: center; font-size: 11px; color: #64748b; margin-top: 25px; border-top: 1px solid #cbd5e1; padding-top: 12px;">
+            Trade Promoters Limited • Generator Installation &amp; QA/QC Division
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.write("---")
+        if st.button("⬅️ Back to Portal"):
+            st.query_params.clear()
+            st.rerun()
+        st.stop()
     else:
-        rows = conn.execute("SELECT * FROM jobs").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+        st.error(f"Certificate record for Job ID '{verify_id}' was not found.")
+        if st.button("⬅️ Back to Portal"):
+            st.query_params.clear()
+            st.rerun()
+        st.stop()
 
-
-def update_job(job_id, qc_defect, rectification, photo_path, status, user):
-    conn = get_conn()
-    conn.execute("""
-        UPDATE jobs
-        SET qc_defect = ?, rectification = ?, qc_photo_path = COALESCE(?, qc_photo_path),
-            status = ?, updated_by = ?, updated_at = ?
-        WHERE job_id = ?
-    """, (qc_defect, rectification, photo_path, status, user,
-          datetime.now().isoformat(timespec="seconds"), job_id))
-    conn.commit()
-    conn.close()
-
-
-init_db()
-seed_if_empty()
-
-# ------------------------------------------------------------------
-# 2. AUTHENTICATION (fixes "anyone can edit anything")
-# ------------------------------------------------------------------
-def login_screen():
-    st.title(" ⚡TPL QA/QC Tracker — Login")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-        if submitted:
-            hashed = hashlib.sha256(password.encode()).hexdigest()
-            if username in USERS and USERS[username] == hashed:
-                st.session_state.auth_user = username
-                st.rerun()
-            else:
-                st.error("Invalid username or password.")
-
-
-if "auth_user" not in st.session_state:
-    login_screen()
-    st.stop()
-
-current_user = st.session_state.auth_user
-
-# ------------------------------------------------------------------
-# 3. PDF GENERATOR (now embeds the actual QC defect photo, if any)
-# ------------------------------------------------------------------
-def create_pdf(job):
+# =======================================================
+# 2. PDF GENERATOR
+# =======================================================
+def create_pdf(job, qr_link_url):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     elements = []
     styles = getSampleStyleSheet()
 
-    title_style = ParagraphStyle(
-        'Title', parent=styles['Heading1'], alignment=1,
-        textColor=colors.HexColor("#003366"), fontSize=18, spaceAfter=4
-    )
-    sub_style = ParagraphStyle(
-        'Sub', parent=styles['Normal'], alignment=1,
-        textColor=colors.HexColor("#555555"), fontSize=11, spaceAfter=15
-    )
+    title_style = ParagraphStyle('TStyle', parent=styles['Heading1'], alignment=1, textColor=colors.HexColor("#003366"), fontSize=17, spaceAfter=3)
+    sub_style = ParagraphStyle('SStyle', parent=styles['Normal'], alignment=1, textColor=colors.HexColor("#555555"), fontSize=9, spaceAfter=12)
+    cell_style = ParagraphStyle('CStyle', parent=styles['Normal'], fontSize=8.5, leading=11)
+    header_cell = ParagraphStyle('HStyle', parent=styles['Normal'], fontSize=8.5, leading=11, fontName="Helvetica-Bold")
 
     elements.append(Paragraph("TRADE PROMOTERS LIMITED", title_style))
-    elements.append(Paragraph("GENERATOR FABRICATION & QA/QC CLEARANCE CERTIFICATE", sub_style))
+    elements.append(Paragraph("GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE", sub_style))
 
     job_info = [
-        [Paragraph(f"<b>Job ID:</b> {job['job_id']}", styles['Normal']),
-         Paragraph(f"<b>Start Date/Time:</b> {job['start_time']}", styles['Normal'])],
-        [Paragraph(f"<b>Assigned Employee:</b> {job['worker']}", styles['Normal']),
-         Paragraph("<b>Status:</b> <font color='green'><b>COMPLETED</b></font>", styles['Normal'])]
+        [Paragraph(f"<b>Job ID:</b> {job.get('job_id', '')}", cell_style), Paragraph(f"<b>Start Date/Time:</b> {job.get('start_time', '')}", cell_style)],
+        [Paragraph(f"<b>Fabrication Lead:</b> {job.get('worker', '')}", cell_style), Paragraph(f"<b>Completed Time:</b> {job.get('completed_time', 'N/A')}", cell_style)]
     ]
     t1 = Table(job_info, colWidths=[270, 270])
     t1.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F4F6F8")),
-        ('PADDING', (0, 0), (-1, -1), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#D2D6DC"))
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F4F6F8")),
+        ('PADDING', (0,0), (-1,-1), 5),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#D2D6DC"))
     ]))
     elements.append(t1)
-    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 8))
 
-    body_info = [
-        [Paragraph("<b>Job Scope / Details:</b>", styles['Normal'])],
-        [Paragraph(job['desc'], styles['Normal'])],
-        [Paragraph("<b>QC Inspection & Defect Log:</b>", styles['Normal'])],
-        [Paragraph(job['qc_defect'] if job['qc_defect'] else "None (Passed first inspection)", styles['Normal'])],
-        [Paragraph("<b>Rectification / Actions Taken:</b>", styles['Normal'])],
-        [Paragraph(job['rectification'] if job['rectification'] else "Fabricated according to specifications", styles['Normal'])]
+    scope_info = [
+        [Paragraph("<b>Job Scope / Fabrication Details:</b>", header_cell)],
+        [Paragraph(job.get('desc', ''), cell_style)]
     ]
-    t2 = Table(body_info, colWidths=[540])
-    t2.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
-        ('BACKGROUND', (0, 2), (-1, 2), colors.HexColor("#FEF3C7")),
-        ('BACKGROUND', (0, 4), (-1, 4), colors.HexColor("#DCFCE7")),
-        ('PADDING', (0, 0), (-1, -1), 6),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E5E7EB"))
+    t_scope = Table(scope_info, colWidths=[540])
+    t_scope.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#E2E8F0")),
+        ('PADDING', (0,0), (-1,-1), 5),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E5E7EB"))
     ]))
-    elements.append(t2)
-    elements.append(Spacer(1, 15))
+    elements.append(t_scope)
+    elements.append(Spacer(1, 8))
 
-    # Embed the actual defect photo if one was uploaded and saved to disk
-    photo_path = job.get("qc_photo_path")
-    if photo_path and os.path.exists(photo_path):
-        elements.append(Paragraph("<b>QC Defect Photo:</b>", styles['Normal']))
-        elements.append(Spacer(1, 6))
-        elements.append(RLImage(photo_path, width=220, height=165))
-        elements.append(Spacer(1, 15))
+    rects = job.get("rectifications", [])
+    if rects:
+        rect_rows = [[Paragraph("<b>QC Rectification Audit Log &amp; Photo Proofs:</b>", header_cell)]]
+        for i, r in enumerate(rects):
+            rect_rows.append([Paragraph(f"<b>Issue #{i+1}:</b> {r.get('defect', '')}<br/><b>Worker Action:</b> {r.get('action', '')} - <font color='green'><b>[Fixed &amp; Cleared]</b></font>", cell_style)])
+            
+            photo_cells = []
+            if r.get("photo") and os.path.exists(r["photo"]):
+                try:
+                    photo_cells.append(RLImage(r["photo"], width=130, height=95))
+                except Exception:
+                    photo_cells.append(Paragraph("[Defect Photo]", cell_style))
+            else:
+                photo_cells.append(Paragraph("No Defect Photo", cell_style))
 
-    # QR Code
-    qr_data = f"TPL QUALITY VERIFIED\nJob ID: {job['job_id']}\nWorker: {job['worker']}\nStatus: COMPLETED\nRectification: {job['rectification']}"
+            if r.get("fixed_photo") and os.path.exists(r["fixed_photo"]):
+                try:
+                    photo_cells.append(RLImage(r["fixed_photo"], width=130, height=95))
+                except Exception:
+                    photo_cells.append(Paragraph("[Fixed Photo]", cell_style))
+            else:
+                photo_cells.append(Paragraph("No Fixed Photo", cell_style))
+
+            img_table = Table([[Paragraph("<b>QC Defect Photo:</b>", cell_style), Paragraph("<b>Worker Fixed Proof:</b>", cell_style)], photo_cells], colWidths=[260, 260])
+            img_table.setStyle(TableStyle([('ALIGN', (0,0), (-1,-1), 'CENTER'), ('PADDING', (0,0), (-1,-1), 3)]))
+            rect_rows.append([img_table])
+
+        t2 = Table(rect_rows, colWidths=[540])
+        t2.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#FEF3C7")),
+            ('PADDING', (0,0), (-1,-1), 4),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E5E7EB"))
+        ]))
+        elements.append(t2)
+        elements.append(Spacer(1, 8))
+    else:
+        pass_table = Table([[Paragraph("<b>QC Inspection Status:</b>", header_cell)], [Paragraph("Clean pass. Inspected and approved to factory standards without defects.", cell_style)]], colWidths=[540])
+        pass_table.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#DCFCE7")), ('PADDING', (0,0), (-1,-1), 4), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E5E7EB"))]))
+        elements.append(pass_table)
+        elements.append(Spacer(1, 8))
+
+    if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
+        try:
+            qc_img = RLImage(job["qc_final_approval_photo"], width=150, height=105)
+            qc_table = Table([[Paragraph("<b>QC Final Approval Sign-Off Photo:</b>", header_cell)], [qc_img]], colWidths=[540])
+            qc_table.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor("#DCFCE7")), ('ALIGN', (0,1), (-1,1), 'CENTER'), ('PADDING', (0,0), (-1,-1), 4), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E5E7EB"))]))
+            elements.append(qc_table)
+            elements.append(Spacer(1, 8))
+        except Exception:
+            pass
+
+    # Direct Clean URL QR Code
     qr = qrcode.QRCode(box_size=3, border=1)
-    qr.add_data(qr_data)
+    qr.add_data(qr_link_url)
     qr.make(fit=True)
     qr_img = qr.make_image(fill_color="black", back_color="white")
-    qr_buffer = io.BytesIO()
-    qr_img.save(qr_buffer, format="PNG")
-    qr_buffer.seek(0)
+    qr_buf = io.BytesIO()
+    qr_img.save(qr_buf, format="PNG")
+    qr_buf.seek(0)
 
+    # Signatures
     sig_info = [
-        [RLImage(qr_buffer, width=90, height=90),
-         Paragraph("<br><br>_____________________<br><b>Fabrication Engineer</b>", styles['Normal']),
-         Paragraph("<br><br>_____________________<br><b>QC Inspector Sign</b>", styles['Normal'])]
+        [RLImage(qr_buf, width=75, height=75), 
+         Paragraph("___________________________<br/><br/><b>Workshop Engineer</b>", cell_style),
+         Paragraph("___________________________<br/><br/><b>Quality Engineer</b>", cell_style)]
     ]
-    t3 = Table(sig_info, colWidths=[140, 200, 200])
-    elements.append(t3)
+    t3 = Table(sig_info, colWidths=[120, 210, 210])
+    t3.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('PADDING', (0,0), (-1,-1), 2)
+    ]))
+    elements.append(KeepTogether(t3))
 
     doc.build(elements)
     buffer.seek(0)
     return buffer
 
+# Helper: Generate standalone QR Image bytes
+def generate_qr_png(url):
+    qr = qrcode.QRCode(box_size=6, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
-# ------------------------------------------------------------------
-# 4. APP INTERFACE
-# ------------------------------------------------------------------
-top_left, top_right = st.columns([4, 1])
-with top_left:
-    st.title("⚡ TPL Fabrication QA/QC System")
-with top_right:
-    st.write("")
-    st.caption(f"👤 {current_user}")
-    if st.button("Logout"):
-        del st.session_state.auth_user
+# =======================================================
+# 3. WORKSHOP & QC MAIN PORTAL
+# =======================================================
+st.title("⚡ TPL Generator Fabrication & QA/QC Portal")
+
+# 1. ASSIGN NEW JOB
+st.subheader("1. Assign New Fabrication Job")
+current_sl_time = get_sl_time()
+
+with st.form("assign_job_form", clear_on_submit=True):
+    new_job_id = st.text_input("Job ID", placeholder="e.g. TPL-GEN-002")
+    new_desc = st.text_area("Job Scope / Fabrication Details", placeholder="Specify canopy dimensions, steel grade, welding specs...")
+    new_worker = st.text_input("Assigned Employee Name")
+    st.caption(f"🕒 Timestamp (Sri Lanka): **{current_sl_time}**")
+    assign_btn = st.form_submit_button("Assign Job")
+    
+    if assign_btn and new_job_id and new_desc and new_worker:
+        st.session_state.jobs_db.append({
+            "job_id": new_job_id.strip(),
+            "desc": new_desc.strip(),
+            "worker": new_worker.strip(),
+            "start_time": current_sl_time,
+            "status": "In Progress",
+            "rectifications": [],
+            "qc_final_approval_photo": ""
+        })
+        save_data(st.session_state.jobs_db)
+        st.success(f"Job {new_job_id} assigned successfully!")
         st.rerun()
 
-tab1, tab2, tab3 = st.tabs(["➕ Assign Job", "🔍 QC & Rectification", "📋 Completed / Print PDF"])
+st.write("---")
 
-# TAB 1: ASSIGN NEW JOB
-with tab1:
-    st.subheader("Assign New Fabrication Job")
-    with st.form("new_job_form", clear_on_submit=True):
-        job_id = st.text_input("Job ID", placeholder="e.g. TPL-GEN-002")
-        desc = st.text_area("Job Scope / Description", placeholder="Type full work details, sheet sizes, frame specs...")
-        worker = st.text_input("Assigned Employee Name")
-        start_time = st.text_input("Start Date & Time", value=datetime.now().strftime("%Y-%m-%d %I:%M %A"))
-        submit_job = st.form_submit_button("Assign Job")
+# 2. ACTIVE JOBS
+st.subheader("2. Ongoing Fabrication & QC Inspection Pipeline")
 
-        if submit_job:
-            if job_id and desc and worker:
-                ok, err = add_job(job_id, desc, worker, start_time, current_user)
-                if ok:
-                    st.success(f"Job {job_id} assigned successfully!")
-                else:
-                    st.error(err)
+active_jobs = [j for j in st.session_state.jobs_db if j.get("status") != "Completed"]
+if not active_jobs:
+    st.info("No active jobs currently in progress.")
+else:
+    for a_idx, job in enumerate(active_jobs):
+        rects = job.get("rectifications", [])
+        all_worker_fixed = True
+        if rects:
+            for r in rects:
+                if not r.get("worker_done", False):
+                    all_worker_fixed = False
+                    break
+
+        qc_photo_uploaded = bool(job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]))
+        status_icon = "🟢" if (all_worker_fixed and qc_photo_uploaded) else ("🔴" if rects and not all_worker_fixed else "🟡")
+        
+        with st.expander(f"{status_icon} {job.get('job_id', '')} - {job.get('worker', '')} [{job.get('status', 'In Progress')}]", expanded=True):
+            st.write(f"**Description:** {job.get('desc', '')}")
+            st.caption(f"Started: {job.get('start_time', '')}")
+
+            # RECTIFICATIONS LIST
+            if rects:
+                st.markdown("#### ⚠️ QC Rectification Issues:")
+                for idx, r in enumerate(rects):
+                    st.markdown(f"**Defect #{idx+1}:** {r.get('defect', '')} *(Logged: {r.get('time', 'N/A')})*")
+                    if r.get("photo") and os.path.exists(r["photo"]):
+                        st.image(r["photo"], width=170, caption="QC Defect Photo")
+                    
+                    col_w1, col_w2 = st.columns(2)
+                    with col_w1:
+                        w_tick = st.checkbox(f"Worker: Completed / Fixed #{idx+1}", value=r.get("worker_done", False), key=f"w_chk_{job.get('job_id')}_{idx}")
+                        action_txt = st.text_input(f"Action Taken #{idx+1}", value=r.get("action", ""), key=f"act_{job.get('job_id')}_{idx}", placeholder="e.g. Re-welded and ground smooth")
+                        r["worker_done"] = w_tick
+                        r["action"] = action_txt
+
+                    with col_w2:
+                        fixed_photo_file = st.file_uploader(f"Upload Fixed Photo #{idx+1} (Optional)", type=["jpg", "jpeg", "png"], key=f"fixed_img_{job.get('job_id')}_{idx}")
+                        if fixed_photo_file:
+                            fixed_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_fixed_{idx+1}.png")
+                            with open(fixed_path, "wb") as f:
+                                f.write(fixed_photo_file.getbuffer())
+                            r["fixed_photo"] = fixed_path
+                            st.success("Fixed photo attached!")
+
+                        if r.get("fixed_photo") and os.path.exists(r["fixed_photo"]):
+                            st.image(r["fixed_photo"], width=130, caption="Fixed Proof Photo")
+                    st.divider()
+                save_data(st.session_state.jobs_db)
             else:
-                st.error("Please fill in Job ID, Description, and Employee Name.")
+                st.success("No defects logged yet. Work progressing normally.")
 
-# TAB 2: QC INSPECTION & RECTIFICATION
-with tab2:
-    st.subheader("QC Inspection & Rectification")
+            # QC LOG COMMENT
+            st.markdown("#### 🔍 QC Inspector: Log Comment / Defect for this Job")
+            with st.form(f"qc_add_defect_{job.get('job_id')}", clear_on_submit=True):
+                defect_text = st.text_area("Defect / Rectification Note", placeholder="Describe issue: weld gap, misaligned holes, paint run...", key=f"def_txt_{job.get('job_id')}")
+                photo_file = st.file_uploader("Upload Inspection / Defect Photo (Optional)", type=["jpg", "jpeg", "png"], key=f"def_img_{job.get('job_id')}")
+                add_defect_btn = st.form_submit_button("➕ Submit Rectification Issue")
+                
+                if add_defect_btn and defect_text:
+                    photo_path = ""
+                    if photo_file:
+                        photo_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_defect_{len(rects)+1}.png")
+                        with open(photo_path, "wb") as f:
+                            f.write(photo_file.getbuffer())
 
-    active_jobs = get_jobs("active")
+                    job["rectifications"].append({
+                        "defect": defect_text.strip(),
+                        "photo": photo_path,
+                        "fixed_photo": "",
+                        "worker_done": False,
+                        "action": "",
+                        "time": get_sl_time()
+                    })
+                    job["status"] = "Needs Rectification"
+                    save_data(st.session_state.jobs_db)
+                    st.success(f"Rectification issue added to {job.get('job_id')}!")
+                    st.rerun()
 
-    if not active_jobs:
-        st.info("No ongoing jobs found.")
-    else:
-        job_options = [j["job_id"] for j in active_jobs]
-        selected_id = st.selectbox("Select Active Job ID", job_options)
-        job = next(j for j in active_jobs if j["job_id"] == selected_id)
+            # QC APPROVAL PHOTO GATE
+            st.write("---")
+            st.markdown("#### 🛡️ QC Final Clearance Photo (Required for Job Completion)")
+            qc_appr_file = st.file_uploader(f"📸 Upload QC Approval Photo / Sign ({job.get('job_id')})", type=["jpg", "jpeg", "png"], key=f"qc_appr_{job.get('job_id')}")
+            if qc_appr_file:
+                appr_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_qc_approval.png")
+                with open(appr_path, "wb") as f:
+                    f.write(qc_appr_file.getbuffer())
+                job["qc_final_approval_photo"] = appr_path
+                save_data(st.session_state.jobs_db)
+                st.success("QC Final Approval Photo successfully attached!")
+                st.rerun()
 
-        st.markdown(f"**Description:** {job['desc']}")
-        st.markdown(f"**Employee:** {job['worker']} | **Started:** {job['start_time']}")
-        st.caption(f"Last updated by {job['updated_by']} at {job['updated_at']}")
+            if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
+                st.image(job["qc_final_approval_photo"], width=200, caption="Verified QC Approval Photo")
 
-        st.write("---")
-        st.markdown("#### 1. QC Defect / Issue Logging")
-        qc_note = st.text_area("QC Defect / Rectification Note", value=job["qc_defect"] or "",
-                                placeholder="Type any issues found during inspection...")
-        uploaded_photo = st.file_uploader("Upload QC Defect Photo", type=["jpg", "jpeg", "png"])
-
-        new_photo_path = None
-        if uploaded_photo:
-            # Persist the photo to disk so it survives restarts and can go into the PDF
-            ext = os.path.splitext(uploaded_photo.name)[1] or ".png"
-            new_photo_path = os.path.join(PHOTO_DIR, f"{selected_id}{ext}")
-            with open(new_photo_path, "wb") as f:
-                f.write(uploaded_photo.getbuffer())
-            st.image(uploaded_photo, caption="Uploaded Defect Photo (will be saved on update)", width=250)
-        elif job["qc_photo_path"] and os.path.exists(job["qc_photo_path"]):
-            st.image(job["qc_photo_path"], caption="Currently saved defect photo", width=250)
-
-        st.write("---")
-        st.markdown("#### 2. Rectification Action Taken")
-        rect_note = st.text_area("How defect was rectified", value=job["rectification"] or "",
-                                  placeholder="Explain how the issues were resolved...")
-
-        is_completed = st.checkbox("✅ All Work & Rectifications Completed (Mark as Completed)",
-                                    value=(job["status"] == "Completed"))
-
-        if st.button("Update Job Status"):
-            new_status = "Completed" if is_completed else ("Needs Rectification" if qc_note else "In Progress")
-            update_job(selected_id, qc_note, rect_note, new_photo_path, new_status, current_user)
-            if is_completed:
-                st.success(f"{selected_id} marked as Completed! Go to the 'Completed / Print PDF' tab to download Certificate.")
+            # SUBMIT GATE
+            st.write("---")
+            can_complete = all_worker_fixed and qc_photo_uploaded
+            
+            if not can_complete:
+                missing_items = []
+                if not all_worker_fixed:
+                    missing_items.append("Worker must mark all defects as Fixed")
+                if not qc_photo_uploaded:
+                    missing_items.append("QC Approval Photo must be uploaded")
+                st.warning(f"🔒 Completion Locked: {', and '.join(missing_items)}.")
+                st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", disabled=True, key=f"dis_comp_{job.get('job_id')}")
+                st.button(f"Submit Final Job ({job.get('job_id')})", disabled=True, key=f"dis_btn_{job.get('job_id')}")
             else:
-                st.warning(f"{selected_id} updated. Current status: {new_status}")
-            st.rerun()
+                is_comp = st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", key=f"comp_{job.get('job_id')}")
+                if st.button(f"Submit Final Job ({job.get('job_id')})", key=f"sub_{job.get('job_id')}"):
+                    if is_comp:
+                        job["status"] = "Completed"
+                        job["completed_time"] = get_sl_time()
+                        save_data(st.session_state.jobs_db)
+                        st.success(f"Job {job.get('job_id')} COMPLETED successfully!")
+                        st.rerun()
+                    else:
+                        st.warning("Please tick the completion checkbox above before submitting.")
 
-# TAB 3: COMPLETED JOBS & PRINT PDF
-with tab3:
-    st.subheader("Completed Jobs & PDF Verification")
+            # DELETE WITH CONFIRMATION
+            st.write("---")
+            act_del_key = f"active_{job.get('job_id')}"
+            
+            if st.session_state.delete_confirm_id == act_del_key:
+                st.error(f"⚠️ Are you sure you want to delete ongoing job **{job.get('job_id')}**?")
+                conf_c1, conf_c2 = st.columns(2)
+                with conf_c1:
+                    if st.button("Yes, Delete Job", key=f"act_yes_{job.get('job_id')}"):
+                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != job.get("job_id")]
+                        save_data(st.session_state.jobs_db)
+                        st.session_state.delete_confirm_id = None
+                        st.success(f"Job {job.get('job_id')} permanently deleted!")
+                        st.rerun()
+                with conf_c2:
+                    if st.button("No, Cancel", key=f"act_no_{job.get('job_id')}"):
+                        st.session_state.delete_confirm_id = None
+                        st.rerun()
+            else:
+                if st.button(f"🗑️ Delete This Job ({job.get('job_id')})", key=f"act_del_btn_{job.get('job_id')}"):
+                    st.session_state.delete_confirm_id = act_del_key
+                    st.rerun()
 
-    completed_jobs = get_jobs("completed")
+# 3. COMPLETED JOBS ARCHIVE
+st.write("---")
+st.subheader("3. Completed Jobs Archive")
 
-    if not completed_jobs:
-        st.info("No completed jobs yet. Complete a job from Tab 2 to generate certificates.")
-    else:
-        for c_job in completed_jobs:
-            with st.expander(f"🟢 {c_job['job_id']} - {c_job['worker']} (COMPLETED)"):
-                st.write(f"**Scope:** {c_job['desc']}")
-                st.write(f"**Rectification Done:** {c_job['rectification']}")
-
-                if c_job["qc_photo_path"] and os.path.exists(c_job["qc_photo_path"]):
-                    st.image(c_job["qc_photo_path"], caption="QC Defect Photo", width=200)
-
-                qr = qrcode.QRCode(box_size=3, border=1)
-                qr.add_data(f"TPL Job: {c_job['job_id']} | Status: Completed")
-                qr.make(fit=True)
-                qr_img = qr.make_image(fill_color="black", back_color="white")
-                img_byte_arr = io.BytesIO()
-                qr_img.save(img_byte_arr, format='PNG')
-                st.image(img_byte_arr.getvalue(), caption=f"Scan to Verify {c_job['job_id']}", width=120)
-
-                pdf_bytes = create_pdf(c_job)
+completed_jobs = [j for j in st.session_state.jobs_db if j.get("status") == "Completed"]
+if not completed_jobs:
+    st.caption("No completed jobs yet.")
+else:
+    for c_idx, c_job in enumerate(completed_jobs):
+        c_rects = c_job.get("rectifications", [])
+        with st.expander(f"🟢 {c_job.get('job_id', '')} - {c_job.get('worker', '')} (COMPLETED)"):
+            st.write(f"**Description:** {c_job.get('desc', '')}")
+            st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
+            st.write(f"**Rectifications Cleared:** {len(c_rects)} items.")
+            
+            # DIRECT PUBLIC LINK (Pure URL)
+            direct_qr_url = f"{PUBLIC_DOMAIN}?verify_job={c_job.get('job_id', '')}"
+            
+            # 1. SHOW QR CODE ON SCREEN
+            st.write("---")
+            st.markdown("#### 📱 Digital Certificate QR Code:")
+            qr_bytes = generate_qr_png(direct_qr_url)
+            
+            qr_col1, qr_col2 = st.columns([1, 2])
+            with qr_col1:
+                st.image(qr_bytes, width=150, caption=f"Scan to Verify {c_job.get('job_id')}")
+            with qr_col2:
+                st.info("💡 Scan with any smartphone camera to open the authenticated certificate without login.")
                 st.download_button(
-                    label=f"📄 Download / Print PDF Certificate ({c_job['job_id']})",
-                    data=pdf_bytes,
-                    file_name=f"TPL_Certificate_{c_job['job_id']}.pdf",
-                    mime="application/pdf",
-                    key=f"dl_{c_job['job_id']}"
+                    label="📥 Download QR Code (PNG)",
+                    data=qr_bytes,
+                    file_name=f"TPL_{c_job.get('job_id')}_QR.png",
+                    mime="image/png",
+                    key=f"qr_dl_{c_job.get('job_id')}_{c_idx}"
                 )
+
+            st.write("---")
+            
+            # 2. ACTION BUTTONS: VIEW CERTIFICATE / PRINT PDF / DELETE
+            btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.5, 1])
+            with btn_col1:
+                if st.button(f"👁️ View Certificate", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
+                    st.query_params["verify_job"] = c_job.get('job_id', '')
+                    st.rerun()
+
+            with btn_col2:
+                pdf_bytes = create_pdf(c_job, direct_qr_url)
+                st.download_button(
+                    label=f"📄 Print PDF Certificate",
+                    data=pdf_bytes,
+                    file_name=f"TPL_{c_job.get('job_id', '')}_Certificate.pdf",
+                    mime="application/pdf",
+                    key=f"dl_{c_job.get('job_id', '')}_{c_idx}"
+                )
+
+            with btn_col3:
+                comp_del_key = f"completed_{c_job.get('job_id')}"
+                if st.button(f"🗑️ Delete", key=f"del_btn_{c_job.get('job_id', '')}_{c_idx}"):
+                    st.session_state.delete_confirm_id = comp_del_key
+                    st.rerun()
+
+            # Delete Confirmation Box
+            if st.session_state.delete_confirm_id == f"completed_{c_job.get('job_id')}":
+                st.write("")
+                st.error(f"⚠️ Are you sure you want to delete completed record **{c_job.get('job_id')}**?")
+                conf_c1, conf_c2 = st.columns(2)
+                with conf_c1:
+                    if st.button("Yes, Delete Record", key=f"comp_yes_{c_job.get('job_id')}"):
+                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != c_job.get("job_id")]
+                        save_data(st.session_state.jobs_db)
+                        st.session_state.delete_confirm_id = None
+                        st.success(f"Job {c_job.get('job_id')} permanently deleted!")
+                        st.rerun()
+                with conf_c2:
+                    if st.button("No, Cancel", key=f"comp_no_{c_job.get('job_id')}"):
+                        st.session_state.delete_confirm_id = None
+                        st.rerun()
