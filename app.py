@@ -18,6 +18,7 @@ DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
+# LIVE APP URL (Scannable from any phone without installing apps)
 LIVE_APP_URL = "https://epaiqfnt5gkqh8brx.streamlit.app"
 
 # SRI LANKA TIMEZONE FUNCTION (Colombo Time)
@@ -31,19 +32,9 @@ def load_data():
         try:
             with open(DB_FILE, "r") as f:
                 data = json.load(f)
-                # Safeguard against older schema jobs
                 for j in data:
                     if "rectifications" not in j:
                         j["rectifications"] = []
-                        if j.get("qc_defect"):
-                            j["rectifications"].append({
-                                "defect": j.get("qc_defect", ""),
-                                "photo": j.get("qc_photo_path", ""),
-                                "worker_done": j.get("defect_rectified", False),
-                                "action": j.get("rectification_note", ""),
-                                "qc_approved": j.get("defect_rectified", False),
-                                "time": j.get("start_time", "")
-                            })
                     if "status" not in j:
                         j["status"] = "In Progress"
                 return data
@@ -58,7 +49,9 @@ def save_data(data):
 if "jobs_db" not in st.session_state:
     st.session_state.jobs_db = load_data()
 
-# 1. DIGITAL CERTIFICATE VIEW (RENDERED CLEANLY FOR QR SCANS)
+# =======================================================
+# 1. PUBLIC DIGITAL CERTIFICATE (ACCESSIBLE VIA ANY BROWSER)
+# =======================================================
 query_params = st.query_params
 if "verify_job" in query_params:
     verified_id = query_params["verify_job"]
@@ -66,57 +59,73 @@ if "verify_job" in query_params:
     
     if matched:
         job = matched[0]
+        
+        # Hide default streamlit header/footer for clean standalone look
         st.markdown("""
-        <div style="background-color: #003366; color: white; padding: 20px; border-radius: 10px; text-align: center;">
-            <h2 style="margin: 0; color: white; letter-spacing: 1px;">TRADE PROMOTERS LIMITED</h2>
-            <p style="margin: 5px 0 0 0; font-size: 13px; color: #cbd5e1;">GENERATOR FABRICATION QA/QC CLEARANCE RECORD</p>
-            <div style="margin-top: 10px;">
-                <span style="background-color: #22c55e; color: white; padding: 5px 16px; border-radius: 20px; font-weight: bold; font-size: 13px;">
-                    ✓ FULLY RECTIFIED &amp; APPROVED
+        <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Official Certificate UI
+        st.markdown(f"""
+        <div style="background-color: #003366; color: white; padding: 22px; border-radius: 12px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+            <h2 style="margin: 0; color: white; letter-spacing: 1.5px; font-family: sans-serif;">TRADE PROMOTERS LIMITED</h2>
+            <p style="margin: 6px 0 0 0; font-size: 12px; color: #cbd5e1; letter-spacing: 0.5px;">GENERATOR FABRICATION &amp; QA/QC CLEARANCE CERTIFICATE</p>
+            <div style="margin-top: 14px;">
+                <span style="background-color: #22c55e; color: white; padding: 6px 18px; border-radius: 20px; font-weight: bold; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.15);">
+                    ✓ QUALITY VERIFIED &amp; COMPLETED
                 </span>
             </div>
         </div>
         """, unsafe_allow_html=True)
         
         st.write("")
+        
         col1, col2 = st.columns(2)
         with col1:
-            st.info(f"**Job ID:** {job.get('job_id', 'N/A')}\n\n**Worker:** {job.get('worker', 'N/A')}")
+            st.info(f"**Job ID:** {job.get('job_id', 'N/A')}\n\n**Lead Worker:** {job.get('worker', 'N/A')}")
         with col2:
-            st.info(f"**Start Time:** {job.get('start_time', 'N/A')}\n\n**Completed At:** {job.get('completed_time', 'N/A')}")
+            st.info(f"**Started:** {job.get('start_time', 'N/A')}\n\n**Completed:** {job.get('completed_time', 'N/A')}")
 
-        st.markdown("#### 📋 Scope of Work")
-        st.markdown(f"<div style='background-color: #f8fafc; border-left: 5px solid #003366; padding: 12px; border-radius: 4px;'>{job.get('desc', 'N/A')}</div>", unsafe_allow_html=True)
+        st.markdown("#### 📋 Fabrication Scope")
+        st.markdown(f"<div style='background-color: #f8fafc; border-left: 5px solid #003366; padding: 12px; border-radius: 6px; font-size: 14px;'>{job.get('desc', 'N/A')}</div>", unsafe_allow_html=True)
         
         st.markdown("#### 🛠️ Rectifications & Approvals Log")
         rects = job.get("rectifications", [])
         if not rects:
-            st.success("Clean pass. No defects reported during inspection.")
+            st.success("Clean pass. Inspected and approved without defects.")
         else:
             for idx, r in enumerate(rects):
                 st.markdown(f"""
-                <div style='background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #22c55e; padding: 10px; border-radius: 4px; margin-bottom: 8px;'>
+                <div style='background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #22c55e; padding: 12px; border-radius: 6px; margin-bottom: 10px;'>
                     <b>Issue #{idx+1}:</b> {r.get('defect', '-')}<br/>
-                    <b>Worker Action:</b> {r.get('action', '-')}<br/>
-                    <b>Verification:</b> <span style='color: #15803d; font-weight: bold;'>✓ Verified &amp; Approved by QC</span>
+                    <b>Action Taken:</b> {r.get('action', '-')}<br/>
+                    <b>Status:</b> <span style='color: #15803d; font-weight: bold;'>✓ Cleared &amp; Approved by QC</span>
                 </div>
                 """, unsafe_allow_html=True)
                 if r.get("photo") and os.path.exists(r["photo"]):
-                    st.image(r["photo"], width=200)
+                    st.image(r["photo"], width=220, caption=f"Inspection Photo #{idx+1}")
 
-        st.write("")
-        if st.button("⬅️ Return to Portal"):
+        st.caption("Authenticated Digital Quality Record • Trade Promoters Limited QA/QC Division")
+        
+        st.write("---")
+        if st.button("⬅️ Open Workshop Portal"):
             st.query_params.clear()
             st.rerun()
         st.stop()
     else:
-        st.error(f"Job Record '{verified_id}' not found.")
+        st.error(f"Job Record '{verified_id}' not found in verification registry.")
         if st.button("⬅️ Back"):
             st.query_params.clear()
             st.rerun()
         st.stop()
 
+# =======================================================
 # 2. PDF GENERATOR
+# =======================================================
 def create_pdf(job, qr_link_url):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -192,9 +201,9 @@ def create_pdf(job, qr_link_url):
     buffer.seek(0)
     return buffer
 
-# ==========================================
-# MAIN INTERFACE
-# ==========================================
+# =======================================================
+# 3. MAIN WORKSHOP & QC INTERFACE
+# =======================================================
 st.title("⚡ TPL Generator Fabrication & QA/QC")
 
 tab1, tab2 = st.tabs(["🛠️ Workshop (Assign, Rectify & Complete)", "🔍 QC Inspector (Report Defects)"])
@@ -233,8 +242,6 @@ with tab1:
     else:
         for job in active_jobs:
             rects = job.get("rectifications", [])
-            
-            # Check if all rectifications have both worker fix and QC approval
             all_rect_cleared = True
             if rects:
                 for r in rects:
@@ -248,7 +255,6 @@ with tab1:
                 st.write(f"**Description:** {job.get('desc', '')}")
                 st.caption(f"Started: {job.get('start_time', '')}")
 
-                # RECTIFICATIONS LIST
                 if rects:
                     st.markdown("#### ⚠️ QC Rectification Items:")
                     for idx, r in enumerate(rects):
@@ -274,10 +280,9 @@ with tab1:
                 else:
                     st.success("No defects logged yet. Work in normal progress.")
 
-                # COMPLETION LOCK GATE
                 st.write("---")
                 if not all_rect_cleared:
-                    st.warning("🔒 Cannot complete job: All QC defect items must be fixed by Worker AND verified/approved by QC.")
+                    st.warning("🔒 Cannot complete job: All QC defect items must be fixed by Worker AND approved by QC.")
                     st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", disabled=True, key=f"dis_comp_{job.get('job_id')}", help="Disabled until all rectifications are approved by QC.")
                     st.button(f"Submit Final Job ({job.get('job_id')})", disabled=True, key=f"dis_btn_{job.get('job_id')}")
                 else:
@@ -307,6 +312,7 @@ with tab1:
                 st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
                 st.write(f"**Rectifications Cleared:** {len(c_rects)} items verified.")
                 
+                # Standalone Web URL that opens directly in any phone's browser
                 live_qr_url = f"{LIVE_APP_URL}/?verify_job={c_job.get('job_id', '')}"
                 
                 qr_preview = qrcode.QRCode(box_size=3, border=1)
@@ -315,7 +321,7 @@ with tab1:
                 p_img = qr_preview.make_image(fill_color="black", back_color="white")
                 img_io = io.BytesIO()
                 p_img.save(img_io, format='PNG')
-                st.image(img_io.getvalue(), caption="Scan QR with Phone Camera to View Online Certificate", width=130)
+                st.image(img_io.getvalue(), caption="Scan QR with any phone to view web certificate", width=130)
                 
                 if st.button(f"👁️ View Digital Certificate ({c_job.get('job_id', '')})", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
                     st.query_params["verify_job"] = c_job.get('job_id', '')
