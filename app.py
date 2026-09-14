@@ -19,7 +19,7 @@ DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
-# EXACT DIRECT PUBLIC LINK (Never use share.streamlit.io)
+# EXACT DIRECT PUBLIC LINK
 PUBLIC_DOMAIN = "https://epaiqfnt5gkqh8brx.streamlit.app"
 
 # SRI LANKA TIMEZONE (Asia/Colombo)
@@ -55,18 +55,8 @@ st.session_state.jobs_db = current_db
 if "delete_confirm_id" not in st.session_state:
     st.session_state.delete_confirm_id = None
 
-# HELPER: Convert image to Base64 for HTML export
-def get_base64_img(img_path):
-    if img_path and os.path.exists(img_path):
-        try:
-            with open(img_path, "rb") as f:
-                return f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
-        except Exception:
-            return ""
-    return ""
-
 # =======================================================
-# 1. 100% PUBLIC DIGITAL CERTIFICATE (NO LOGIN - DIRECT SCAN)
+# 1. DIGITAL CERTIFICATE VIEW (QR SCAN & VIEW CERTIFICATE)
 # =======================================================
 verify_id = st.query_params.get("verify_job")
 
@@ -168,7 +158,7 @@ if verify_id:
         """, unsafe_allow_html=True)
 
         st.write("---")
-        if st.button("⬅️ Back to Portal"):
+        if st.button("⬅️ Back to Workshop Portal"):
             st.query_params.clear()
             st.rerun()
         st.stop()
@@ -180,61 +170,7 @@ if verify_id:
         st.stop()
 
 # =======================================================
-# 2. STANDALONE HTML FILE BUILDER
-# =======================================================
-def generate_standalone_html(job):
-    rect_html = ""
-    rects = job.get("rectifications", [])
-    if not rects:
-        rect_html = "<div style='background: #f0fdf4; border-left: 5px solid #16a34a; padding: 12px; border-radius: 6px; font-size: 13px; color: #166534;'>Clean pass. Initial inspection passed with zero defects.</div>"
-    else:
-        for idx, r in enumerate(rects):
-            d_img = f"<img src='{get_base64_img(r.get('photo'))}' style='width: 140px; border-radius: 4px;'/>" if r.get("photo") and os.path.exists(r["photo"]) else ""
-            f_img = f"<img src='{get_base64_img(r.get('fixed_photo'))}' style='width: 140px; border-radius: 4px;'/>" if r.get("fixed_photo") and os.path.exists(r["fixed_photo"]) else ""
-            rect_html += f"""
-            <div style="background: white; border: 1px solid #e2e8f0; border-left: 5px solid #16a34a; padding: 12px; border-radius: 6px; margin-bottom: 10px;">
-                <div style="font-size: 13px; font-weight: bold; color: #991b1b;">Defect #{idx+1}: {r.get('defect', '-')}</div>
-                <div style="font-size: 13px; color: #166534; margin-top: 4px;">✓ Action Taken: {r.get('action', '-')}</div>
-                <div style="margin-top: 8px; display: flex; gap: 10px;">{d_img}{f_img}</div>
-            </div>
-            """
-
-    qc_appr_html = ""
-    if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
-        qc_appr_html = f"<div style='margin-top: 15px;'><h4 style='font-size: 13px;'>QC Final Sign-Off Photo</h4><img src='{get_base64_img(job['qc_final_approval_photo'])}' style='width: 220px; border-radius: 6px;'/></div>"
-
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TPL Certificate - {job.get('job_id')}</title>
-<style>
-body {{ font-family: -apple-system, sans-serif; background: #f8fafc; margin: 0; padding: 15px; color: #1e293b; }}
-.card {{ background: white; border-radius: 8px; padding: 14px; margin-bottom: 12px; border: 1px solid #e2e8f0; }}
-</style>
-</head>
-<body>
-<div style="max-width: 550px; margin: 0 auto;">
-    <div style="background: #003366; color: white; padding: 18px; border-radius: 10px; text-align: center;">
-        <h3 style="margin: 0;">TRADE PROMOTERS LIMITED</h3>
-        <p style="margin: 4px 0 0 0; font-size: 11px; color: #93c5fd;">QA/QC CLEARANCE CERTIFICATE</p>
-    </div>
-    <div class="card" style="margin-top: 12px;">
-        <table style="width: 100%; font-size: 13px; line-height: 1.8;">
-            <tr><td><b>Job ID:</b> {job.get('job_id')}</td><td><b>Lead:</b> {job.get('worker')}</td></tr>
-            <tr><td><b>Started:</b> {job.get('start_time')}</td><td><b>Completed:</b> {job.get('completed_time')}</td></tr>
-        </table>
-    </div>
-    <div class="card" style="border-left: 5px solid #003366;"><b>Scope:</b> {job.get('desc')}</div>
-    {rect_html}
-    {qc_appr_html}
-    <p style="text-align: center; font-size: 11px; color: #64748b; margin-top: 20px;">Authenticated Document • Trade Promoters Limited</p>
-</div>
-</body>
-</html>"""
-
-# =======================================================
-# 3. PDF GENERATOR
+# 2. PDF GENERATOR
 # =======================================================
 def create_pdf(job, qr_link_url):
     buffer = io.BytesIO()
@@ -327,7 +263,6 @@ def create_pdf(job, qr_link_url):
         except Exception:
             pass
 
-    # Direct Clean URL QR Code
     qr = qrcode.QRCode(box_size=3, border=1)
     qr.add_data(qr_link_url)
     qr.make(fit=True)
@@ -336,7 +271,6 @@ def create_pdf(job, qr_link_url):
     qr_img.save(qr_buf, format="PNG")
     qr_buf.seek(0)
 
-    # Signatures
     sig_info = [
         [RLImage(qr_buf, width=75, height=75), 
          Paragraph("___________________________<br/><br/><b>Workshop Engineer</b>", cell_style),
@@ -354,7 +288,6 @@ def create_pdf(job, qr_link_url):
     buffer.seek(0)
     return buffer
 
-# Standalone QR Code bytes (Strictly URL only, never exceeds limits)
 def generate_qr_png(url):
     qr = qrcode.QRCode(box_size=5, border=2)
     qr.add_data(str(url).strip())
@@ -365,7 +298,7 @@ def generate_qr_png(url):
     return buf.getvalue()
 
 # =======================================================
-# 4. WORKSHOP & QC MAIN PORTAL
+# 3. WORKSHOP & QC MAIN PORTAL
 # =======================================================
 st.title("⚡ TPL Generator Fabrication & QA/QC Portal")
 
@@ -556,7 +489,6 @@ else:
             st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
             st.write(f"**Rectifications Cleared:** {len(c_rects)} items.")
             
-            # PURE SHORT PUBLIC URL (Never exceeds QR limits)
             direct_qr_url = f"{PUBLIC_DOMAIN}/?verify_job={c_job.get('job_id', '')}"
             
             # 1. SHOW QR CODE ON SCREEN
@@ -568,7 +500,7 @@ else:
             with qr_col1:
                 st.image(qr_bytes, width=150, caption=f"Scan to Verify {c_job.get('job_id')}")
             with qr_col2:
-                st.info("💡 **Instant Public Access:** Scan with any smartphone camera to open the certificate without login.")
+                st.info("💡 Scan with any smartphone camera to open the authenticated certificate.")
                 st.download_button(
                     label="📥 Download QR Code (PNG)",
                     data=qr_bytes,
@@ -576,22 +508,17 @@ else:
                     mime="image/png",
                     key=f"qr_dl_{c_job.get('job_id')}_{c_idx}"
                 )
-                
-                # Download Standalone HTML Certificate
-                html_data = generate_standalone_html(c_job)
-                st.download_button(
-                    label="🌐 Download HTML Certificate",
-                    data=html_data,
-                    file_name=f"TPL_{c_job.get('job_id')}_Certificate.html",
-                    mime="text/html",
-                    key=f"html_dl_{c_job.get('job_id')}_{c_idx}"
-                )
 
             st.write("---")
             
             # 2. ACTION BUTTONS: VIEW CERTIFICATE / PRINT PDF / DELETE
-            btn_col1, btn_col2 = st.columns([1.5, 1])
+            btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.5, 1])
             with btn_col1:
+                if st.button(f"👁️ View Certificate", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
+                    st.query_params["verify_job"] = c_job.get('job_id', '')
+                    st.rerun()
+
+            with btn_col2:
                 pdf_bytes = create_pdf(c_job, direct_qr_url)
                 st.download_button(
                     label=f"📄 Print PDF Certificate",
@@ -601,7 +528,7 @@ else:
                     key=f"dl_{c_job.get('job_id', '')}_{c_idx}"
                 )
 
-            with btn_col2:
+            with btn_col3:
                 comp_del_key = f"completed_{c_job.get('job_id')}"
                 if st.button(f"🗑️ Delete", key=f"del_btn_{c_job.get('job_id', '')}_{c_idx}"):
                     st.session_state.delete_confirm_id = comp_del_key
