@@ -4,7 +4,6 @@ from datetime import datetime
 import io
 import os
 import json
-import base64
 import qrcode
 from PIL import Image
 from reportlab.lib.pagesizes import letter
@@ -12,13 +11,16 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="TPL QA/QC Fabrication Tracker", layout="centered", page_icon="⚡")
+st.set_page_config(page_title="TPL QA/QC Tracker", layout="centered", page_icon="⚡")
 
 DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
-# 1. PERMANENT DATABASE STORAGE FUNCTIONS
+# LIVE APP URL FOR SCANNING
+LIVE_APP_URL = "https://epaiqfnt5gkqh8brx.streamlit.app"
+
+# 1. DATABASE LOAD & SAVE
 def load_data():
     if os.path.exists(DB_FILE):
         try:
@@ -47,8 +49,7 @@ def save_data(data):
 if "jobs_db" not in st.session_state:
     st.session_state.jobs_db = load_data()
 
-# 2. QR CODE SCAN VERIFICATION PAGE (DIGITAL CERTIFICATE VIEW)
-# Check if someone scanned a QR code with ?verify_job=JOB_ID
+# 2. DIGITAL CERTIFICATE VIEW (RENDERED CLEANLY)
 query_params = st.query_params
 if "verify_job" in query_params:
     verified_id = query_params["verify_job"]
@@ -56,66 +57,71 @@ if "verify_job" in query_params:
     
     if matched:
         job = matched[0]
-        st.markdown(
-            f"""
-            <div style="background-color: #f8fafc; border: 3px solid #003366; border-radius: 12px; padding: 22px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                <div style="text-align: center; border-bottom: 2px solid #003366; padding-bottom: 12px; margin-bottom: 16px;">
-                    <h2 style="color: #003366; margin: 0; letter-spacing: 1px;">TRADE PROMOTERS LIMITED</h2>
-                    <h4 style="color: #4a5568; margin: 5px 0 0 0; font-size: 13px;">OFFICIAL QUALITY ASSURANCE &amp; CLEARANCE RECORD</h4>
-                    <span style="display: inline-block; background-color: #22c55e; color: white; padding: 4px 14px; border-radius: 20px; font-weight: bold; font-size: 13px; margin-top: 10px;">
-                        ✓ QUALITY VERIFIED &amp; COMPLETED
-                    </span>
-                </div>
-                
-                <table style="width: 100%; font-size: 13px; border-collapse: collapse; margin-bottom: 16px;">
-                    <tr style="border-bottom: 1px solid #e2e8f0;">
-                        <td style="padding: 8px 4px; color: #64748b;">Job ID:</td>
-                        <td style="padding: 8px 4px; font-weight: bold; color: #0f172a;">{job['job_id']}</td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #e2e8f0;">
-                        <td style="padding: 8px 4px; color: #64748b;">Lead Worker:</td>
-                        <td style="padding: 8px 4px; font-weight: bold; color: #0f172a;">{job['worker']}</td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #e2e8f0;">
-                        <td style="padding: 8px 4px; color: #64748b;">Start Time:</td>
-                        <td style="padding: 8px 4px; color: #0f172a;">{job['start_time']}</td>
-                    </tr>
-                </table>
-
-                <div style="margin-bottom: 14px; background: #ffffff; padding: 12px; border-radius: 8px; border-left: 4px solid #003366; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-                    <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: bold;">Work Scope</div>
-                    <div style="font-size: 13px; color: #1e293b; margin-top: 4px;">{job['desc']}</div>
-                </div>
-
-                <div style="margin-bottom: 14px; background: #fffbeb; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">
-                    <div style="font-size: 11px; text-transform: uppercase; color: #b45309; font-weight: bold;">QC Defect Inspection</div>
-                    <div style="font-size: 13px; color: #78350f; margin-top: 4px;">{job['qc_defect'] if job['qc_defect'] else 'No defects identified during inspection.'}</div>
-                </div>
-
-                <div style="margin-bottom: 14px; background: #f0fdf4; padding: 12px; border-radius: 8px; border-left: 4px solid #22c55e;">
-                    <div style="font-size: 11px; text-transform: uppercase; color: #15803d; font-weight: bold;">Rectification Action Taken</div>
-                    <div style="font-size: 13px; color: #14532d; margin-top: 4px;">{job['rectification_note'] if job['rectification_note'] else 'Fabricated to standard tolerances.'}</div>
-                </div>
-                
-                <div style="text-align: center; margin-top: 18px; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 10px;">
-                    This document is digitally validated by Trade Promoters Limited QA/QC Division.
-                </div>
+        
+        # Header Banner
+        st.markdown("""
+        <div style="background-color: #003366; color: white; padding: 20px; border-radius: 10px; text-align: center;">
+            <h2 style="margin: 0; color: white; letter-spacing: 1px;">TRADE PROMOTERS LIMITED</h2>
+            <p style="margin: 5px 0 0 0; font-size: 13px; color: #cbd5e1;">GENERATOR FABRICATION &amp; QA/QC CLEARANCE CERTIFICATE</p>
+            <div style="margin-top: 12px;">
+                <span style="background-color: #22c55e; color: white; padding: 5px 16px; border-radius: 20px; font-weight: bold; font-size: 13px;">
+                    ✓ QUALITY VERIFIED &amp; COMPLETED
+                </span>
             </div>
-            """,
-            unsafe_allow_html=True
-        )
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.write("")
+        
+        # Key Details Grid
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"**Job ID:** {job['job_id']}\n\n**Worker:** {job['worker']}")
+        with col2:
+            st.info(f"**Started At:** {job['start_time']}\n\n**Status:** Completed")
+
+        # Job Scope Card
+        st.markdown("#### 📋 Fabrication Scope")
+        st.markdown(f"""
+        <div style="background-color: #f8fafc; border-left: 5px solid #003366; padding: 12px; border-radius: 4px;">
+            {job['desc']}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # QC Defect Card
+        st.markdown("#### 🔍 QC Inspection Details")
+        qc_txt = job['qc_defect'] if job['qc_defect'] else "None (Passed initial inspection)"
+        st.markdown(f"""
+        <div style="background-color: #fffbeb; border-left: 5px solid #f59e0b; padding: 12px; border-radius: 4px; color: #78350f;">
+            {qc_txt}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Rectification Card
+        st.markdown("#### 🛠️ Rectification & Verification")
+        rect_txt = job['rectification_note'] if job['rectification_note'] else "Fabricated according to factory standard tolerances."
+        st.markdown(f"""
+        <div style="background-color: #f0fdf4; border-left: 5px solid #22c55e; padding: 12px; border-radius: 4px; color: #14532d;">
+            {rect_txt}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Photo Display
         if job.get("qc_photo_path") and os.path.exists(job["qc_photo_path"]):
             st.write("---")
-            st.image(job["qc_photo_path"], caption="QC Inspection Photo", use_container_width=True)
-            
+            st.markdown("#### 📷 QC Inspection Photo")
+            st.image(job["qc_photo_path"], use_container_width=True)
+
+        st.caption("This digital record is authenticated and maintained by Trade Promoters Limited Quality Control.")
+        
         st.write("")
-        if st.button("⬅️ Back to Main Workshop Portal"):
+        if st.button("⬅️ Open Workshop System"):
             st.query_params.clear()
             st.rerun()
         st.stop()
     else:
-        st.error(f"Job ID '{verified_id}' not found in verification registry.")
-        if st.button("⬅️ Return to Main Portal"):
+        st.error(f"Job Record '{verified_id}' not found.")
+        if st.button("⬅️ Back"):
             st.query_params.clear()
             st.rerun()
         st.stop()
@@ -171,7 +177,7 @@ def create_pdf(job, qr_link_url):
     elements.append(t2)
     elements.append(Spacer(1, 12))
 
-    # Dynamic QR code targeting digital certificate URL
+    # Dynamic QR Code targeting the live URL
     qr = qrcode.QRCode(box_size=3, border=1)
     qr.add_data(qr_link_url)
     qr.make(fit=True)
@@ -197,11 +203,6 @@ def create_pdf(job, qr_link_url):
     buffer.seek(0)
     return buffer
 
-# Helper: Build live verification web link for QR Code
-def get_qr_url(job_id):
-    # If on streamlit cloud, use current URL or default
-    return f"https://share.streamlit.io?verify_job={job_id}"
-
 # ==========================================
 # MAIN APP INTERFACE
 # ==========================================
@@ -212,11 +213,18 @@ tab1, tab2 = st.tabs(["🛠️ Workshop (Assign, Rectify & Complete)", "🔍 QC 
 # TAB 1: WORKSHOP
 with tab1:
     st.subheader("1. Assign New Fabrication Job")
+    
+    # Auto Current Date & Time
+    current_now_str = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+    
     with st.form("assign_job_form", clear_on_submit=True):
         new_job_id = st.text_input("Job ID", placeholder="e.g. TPL-GEN-002")
         new_desc = st.text_area("Job Scope / Fabrication Details", placeholder="Specify dimensions, gauge, welding...")
         new_worker = st.text_input("Assigned Employee Name")
-        new_start = st.text_input("Start Date & Time", value=datetime.now().strftime("%Y-%m-%d %I:%M %p"))
+        
+        # Display auto date/time (Read only so users don't have to type)
+        st.text(f"Auto Timestamp: {current_now_str}")
+        
         assign_btn = st.form_submit_button("Assign Job")
         
         if assign_btn and new_job_id and new_desc and new_worker:
@@ -224,7 +232,7 @@ with tab1:
                 "job_id": new_job_id.strip(),
                 "desc": new_desc.strip(),
                 "worker": new_worker.strip(),
-                "start_time": new_start.strip(),
+                "start_time": current_now_str, # Auto assigned
                 "status": "In Progress",
                 "qc_defect": "",
                 "defect_rectified": False,
@@ -232,7 +240,7 @@ with tab1:
                 "qc_photo_path": ""
             })
             save_data(st.session_state.jobs_db)
-            st.success(f"Job {new_job_id} saved permanently and assigned!")
+            st.success(f"Job {new_job_id} assigned at {current_now_str}!")
             st.rerun()
 
     st.write("---")
@@ -268,7 +276,7 @@ with tab1:
                     if is_comp:
                         job["status"] = "Completed"
                         save_data(st.session_state.jobs_db)
-                        st.success(f"Job {job['job_id']} marked as COMPLETED! Stored permanently.")
+                        st.success(f"Job {job['job_id']} marked as COMPLETED!")
                         st.rerun()
                     else:
                         st.warning("Please tick the 'Mark Job as COMPLETED' box before submitting.")
@@ -286,25 +294,24 @@ with tab1:
                 st.write(f"**Description:** {c_job['desc']}")
                 st.write(f"**Rectifications Logged:** {c_job['rectification_note'] if c_job['rectification_note'] else 'None'}")
                 
-                # Generate Web URL for the Digital Certificate
-                verification_url = f"?verify_job={c_job['job_id']}"
+                # Full Live URL for QR Scanning
+                live_qr_url = f"{LIVE_APP_URL}/?verify_job={c_job['job_id']}"
                 
-                # Dynamic QR Code to Web Verification Link
                 qr_preview = qrcode.QRCode(box_size=3, border=1)
-                qr_preview.add_data(verification_url)
+                qr_preview.add_data(live_qr_url)
                 qr_preview.make(fit=True)
                 p_img = qr_preview.make_image(fill_color="black", back_color="white")
                 img_io = io.BytesIO()
                 p_img.save(img_io, format='PNG')
-                st.image(img_io.getvalue(), caption="Scan to view Digital Certificate", width=120)
+                st.image(img_io.getvalue(), caption="Scan QR with any Phone Camera to View Online Certificate", width=130)
                 
-                # Preview Digital Certificate button right inside app
+                # View Certificate Inside App
                 if st.button(f"👁️ View Digital Certificate ({c_job['job_id']})", key=f"view_{c_job['job_id']}"):
                     st.query_params["verify_job"] = c_job['job_id']
                     st.rerun()
 
                 # PDF Download
-                pdf_bytes = create_pdf(c_job, verification_url)
+                pdf_bytes = create_pdf(c_job, live_qr_url)
                 st.download_button(
                     label=f"📄 Download / Print PDF ({c_job['job_id']})",
                     data=pdf_bytes,
