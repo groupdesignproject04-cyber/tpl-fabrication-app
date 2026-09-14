@@ -5,7 +5,6 @@ import pytz
 import io
 import os
 import json
-import base64
 import qrcode
 from PIL import Image
 from reportlab.lib.pagesizes import letter
@@ -19,7 +18,7 @@ DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
-# EXACT DIRECT PUBLIC APP URL (NEVER USES share.streamlit.io)
+# EXACT DIRECT PUBLIC DOMAIN (Scannable without any Streamlit login)
 PUBLIC_DOMAIN = "https://epaiqfnt5gkqh8brx.streamlit.app"
 
 # SRI LANKA TIMEZONE (Asia/Colombo)
@@ -56,13 +55,13 @@ if "delete_confirm_id" not in st.session_state:
     st.session_state.delete_confirm_id = None
 
 # =======================================================
-# 1. 100% PUBLIC DIGITAL CERTIFICATE (NO LOGIN - PURE HTML VIEW)
+# 1. 100% PUBLIC DIGITAL CERTIFICATE (NO LOGIN - DIRECT SCAN)
 # =======================================================
 if "verify_job" in st.query_params:
-    verified_id = st.query_params["verify_job"]
-    matched = [j for j in current_db if str(j.get("job_id", "")).strip().lower() == str(verified_id).strip().lower()]
+    verified_id = str(st.query_params["verify_job"]).strip().lower()
+    matched = [j for j in current_db if str(j.get("job_id", "")).strip().lower() == verified_id]
     
-    # Fully stripped UI: No menus, no headers, no login wrappers
+    # Hide all Streamlit UI wrappers completely for external visitors
     st.markdown("""
     <style>
         #MainMenu, footer, header, .stDeployButton, [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
@@ -74,6 +73,7 @@ if "verify_job" in st.query_params:
     if matched:
         job = matched[0]
         
+        # Blue Header Banner
         st.markdown(f"""
         <div style="background-color: #003366; color: white; padding: 22px 14px; border-radius: 12px; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.12);">
             <h2 style="margin: 0; color: #ffffff; letter-spacing: 1.2px; font-size: 21px; font-weight: 800;">TRADE PROMOTERS LIMITED</h2>
@@ -88,6 +88,7 @@ if "verify_job" in st.query_params:
         
         st.write("")
         
+        # Details Card
         st.markdown(f"""
         <div style="background: white; border-radius: 10px; padding: 14px; border: 1px solid #e2e8f0; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <table style="width: 100%; font-size: 13px; line-height: 1.8;">
@@ -113,7 +114,7 @@ if "verify_job" in st.query_params:
 
         st.markdown("##### 📋 Fabrication Scope")
         st.markdown(f"""
-        <div style="background: white; border-left: 5px solid #003366; border-radius: 6px; padding: 12px 14px; font-size: 13px; color: #1e293b; margin-bottom: 16px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+        <div style="background: white; border-left: 5px solid #003366; border-radius: 6px; padding: 12px 14px; font-size: 13px; color: #1e293b; margin-bottom: 16px; border: 1px solid #e2e8f0; border-left: 5px solid #003366;">
             {job.get('desc', 'N/A')}
         </div>
         """, unsafe_allow_html=True)
@@ -260,7 +261,7 @@ def create_pdf(job, qr_link_url):
         except Exception:
             pass
 
-    # Dynamic QR Code (Pure URL)
+    # Direct Clean URL QR Code
     qr = qrcode.QRCode(box_size=3, border=1)
     qr.add_data(qr_link_url)
     qr.make(fit=True)
@@ -286,6 +287,16 @@ def create_pdf(job, qr_link_url):
     doc.build(elements)
     buffer.seek(0)
     return buffer
+
+# Helper: Generate standalone QR Image bytes
+def generate_qr_png(url):
+    qr = qrcode.QRCode(box_size=6, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 # =======================================================
 # 3. WORKSHOP & QC MAIN PORTAL
@@ -479,10 +490,31 @@ else:
             st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
             st.write(f"**Rectifications Cleared:** {len(c_rects)} items.")
             
-            # EXACT DIRECT PUBLIC LINK (Scannable by anyone)
+            # EXACT DIRECT PUBLIC LINK (Pure URL)
             direct_qr_url = f"{PUBLIC_DOMAIN}/?verify_job={c_job.get('job_id', '')}"
             
-            # Action Buttons
+            # 1. SHOW QR CODE ON SCREEN IMMEDIATELY
+            st.write("---")
+            st.markdown("#### 📱 Digital Certificate QR Code:")
+            qr_bytes = generate_qr_png(direct_qr_url)
+            
+            qr_col1, qr_col2 = st.columns([1, 2])
+            with qr_col1:
+                st.image(qr_bytes, width=150, caption=f"Scan to Verify {c_job.get('job_id')}")
+            with qr_col2:
+                st.info("💡 Any phone camera can scan this QR code directly to open the verified certificate without login.")
+                # Download Standalone QR Code button
+                st.download_button(
+                    label="📥 Download QR Code (PNG)",
+                    data=qr_bytes,
+                    file_name=f"TPL_{c_job.get('job_id')}_QR.png",
+                    mime="image/png",
+                    key=f"qr_dl_{c_job.get('job_id')}_{c_idx}"
+                )
+
+            st.write("---")
+            
+            # 2. ACTION BUTTONS: VIEW CERTIFICATE / PRINT PDF / DELETE
             btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.5, 1])
             with btn_col1:
                 if st.button(f"👁️ View Certificate", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
