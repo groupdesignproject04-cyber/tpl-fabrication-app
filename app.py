@@ -50,6 +50,10 @@ def save_data(data):
 current_db = load_data()
 st.session_state.jobs_db = current_db
 
+# Delete Confirmation State
+if "delete_confirm_id" not in st.session_state:
+    st.session_state.delete_confirm_id = None
+
 # =======================================================
 # 1. DIGITAL CERTIFICATE VIEW (STANDALONE & IN-APP VIEW)
 # =======================================================
@@ -171,7 +175,6 @@ def create_pdf(job, qr_link_url):
     elements.append(Paragraph("TRADE PROMOTERS LIMITED", title_style))
     elements.append(Paragraph("GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE", sub_style))
 
-    # Basic Info Table
     job_info = [
         [Paragraph(f"<b>Job ID:</b> {job.get('job_id', '')}", cell_style), Paragraph(f"<b>Start Date/Time:</b> {job.get('start_time', '')}", cell_style)],
         [Paragraph(f"<b>Fabrication Lead:</b> {job.get('worker', '')}", cell_style), Paragraph(f"<b>Completed Time:</b> {job.get('completed_time', 'N/A')}", cell_style)]
@@ -185,7 +188,6 @@ def create_pdf(job, qr_link_url):
     elements.append(t1)
     elements.append(Spacer(1, 8))
 
-    # Scope of Work Table
     scope_info = [
         [Paragraph("<b>Job Scope / Fabrication Details:</b>", header_cell)],
         [Paragraph(job.get('desc', ''), cell_style)]
@@ -199,7 +201,6 @@ def create_pdf(job, qr_link_url):
     elements.append(t_scope)
     elements.append(Spacer(1, 8))
 
-    # Rectifications & Photos Table
     rects = job.get("rectifications", [])
     if rects:
         rect_rows = [[Paragraph("<b>QC Rectification Audit Log &amp; Photo Proofs:</b>", header_cell)]]
@@ -241,7 +242,6 @@ def create_pdf(job, qr_link_url):
         elements.append(pass_table)
         elements.append(Spacer(1, 8))
 
-    # QC Approval Photo in PDF
     if job.get("qc_final_approval_photo") and os.path.exists(job["qc_final_approval_photo"]):
         try:
             qc_img = RLImage(job["qc_final_approval_photo"], width=150, height=105)
@@ -252,7 +252,6 @@ def create_pdf(job, qr_link_url):
         except Exception:
             pass
 
-    # Dynamic QR Code
     qr = qrcode.QRCode(box_size=3, border=1)
     qr.add_data(qr_link_url)
     qr.make(fit=True)
@@ -261,7 +260,6 @@ def create_pdf(job, qr_link_url):
     qr_img.save(qr_buf, format="PNG")
     qr_buf.seek(0)
 
-    # Signatures Block (Only Workshop Engineer and Quality Engineer)
     sig_info = [
         [RLImage(qr_buf, width=75, height=75), 
          Paragraph("___________________________<br/><br/><b>Workshop Engineer</b>", cell_style),
@@ -318,7 +316,7 @@ active_jobs = [j for j in st.session_state.jobs_db if j.get("status") != "Comple
 if not active_jobs:
     st.info("No active jobs currently in progress.")
 else:
-    for job in active_jobs:
+    for a_idx, job in enumerate(active_jobs):
         rects = job.get("rectifications", [])
         all_worker_fixed = True
         if rects:
@@ -433,6 +431,29 @@ else:
                     else:
                         st.warning("Please tick the completion checkbox above before submitting.")
 
+            # SECTION E: DELETE WITH CONFIRMATION (ACTIVE JOBS)
+            st.write("---")
+            act_del_key = f"active_{job.get('job_id')}"
+            
+            if st.session_state.delete_confirm_id == act_del_key:
+                st.error(f"⚠️ Are you sure you want to delete ongoing job **{job.get('job_id')}**?")
+                conf_c1, conf_c2 = st.columns(2)
+                with conf_c1:
+                    if st.button("Yes, Delete Job", key=f"act_yes_{job.get('job_id')}"):
+                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != job.get("job_id")]
+                        save_data(st.session_state.jobs_db)
+                        st.session_state.delete_confirm_id = None
+                        st.success(f"Job {job.get('job_id')} permanently deleted!")
+                        st.rerun()
+                with conf_c2:
+                    if st.button("No, Cancel", key=f"act_no_{job.get('job_id')}"):
+                        st.session_state.delete_confirm_id = None
+                        st.rerun()
+            else:
+                if st.button(f"🗑️ Delete This Job ({job.get('job_id')})", key=f"act_del_btn_{job.get('job_id')}"):
+                    st.session_state.delete_confirm_id = act_del_key
+                    st.rerun()
+
 # 3. COMPLETED JOBS ARCHIVE
 st.write("---")
 st.subheader("3. Completed Jobs Archive")
@@ -450,10 +471,8 @@ else:
             
             live_qr_url = f"{LIVE_APP_URL}/?verify_job={c_job.get('job_id', '')}"
             
-            # Action Buttons
             btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.5, 1])
             with btn_col1:
-                # View Digital Certificate inside the portal
                 if st.button(f"👁️ View Certificate", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
                     st.query_params["verify_job"] = c_job.get('job_id', '')
                     st.rerun()
@@ -469,8 +488,24 @@ else:
                 )
 
             with btn_col3:
-                if st.button(f"🗑️ Delete", key=f"del_{c_job.get('job_id', '')}_{c_idx}"):
-                    st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != c_job.get("job_id")]
-                    save_data(st.session_state.jobs_db)
-                    st.success(f"Job {c_job.get('job_id')} deleted!")
+                comp_del_key = f"completed_{c_job.get('job_id')}"
+                if st.button(f"🗑️ Delete", key=f"del_btn_{c_job.get('job_id', '')}_{c_idx}"):
+                    st.session_state.delete_confirm_id = comp_del_key
                     st.rerun()
+
+            # Confirmation Box for Completed Jobs
+            if st.session_state.delete_confirm_id == f"completed_{c_job.get('job_id')}":
+                st.write("")
+                st.error(f"⚠️ Are you sure you want to delete completed record **{c_job.get('job_id')}**?")
+                conf_c1, conf_c2 = st.columns(2)
+                with conf_c1:
+                    if st.button("Yes, Delete Record", key=f"comp_yes_{c_job.get('job_id')}"):
+                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != c_job.get("job_id")]
+                        save_data(st.session_state.jobs_db)
+                        st.session_state.delete_confirm_id = None
+                        st.success(f"Job {c_job.get('job_id')} permanently deleted!")
+                        st.rerun()
+                with conf_c2:
+                    if st.button("No, Cancel", key=f"comp_no_{c_job.get('job_id')}"):
+                        st.session_state.delete_confirm_id = None
+                        st.rerun()
