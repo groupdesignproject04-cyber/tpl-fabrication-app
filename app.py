@@ -12,7 +12,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-st.set_page_config(page_title="TPL QA/QC Fabrication Tracker", layout="centered", page_icon="⚡")
+st.set_page_config(page_title="TPL QA/QC Tracker", layout="centered", page_icon="⚡")
 
 DB_FILE = "tpl_jobs_database.json"
 PHOTOS_DIR = "uploaded_photos"
@@ -20,17 +20,33 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 LIVE_APP_URL = "https://epaiqfnt5gkqh8brx.streamlit.app"
 
-# SRI LANKA TIMEZONE FUNCTION
+# SRI LANKA TIMEZONE FUNCTION (Colombo Time)
 def get_sl_time():
     sl_tz = pytz.timezone('Asia/Colombo')
     return datetime.now(sl_tz).strftime("%Y-%m-%d %I:%M %p")
 
-# DATABASE FUNCTIONS
+# DATABASE LOAD & AUTO-MIGRATE OLD JOBS
 def load_data():
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                # Safeguard against older schema jobs
+                for j in data:
+                    if "rectifications" not in j:
+                        j["rectifications"] = []
+                        if j.get("qc_defect"):
+                            j["rectifications"].append({
+                                "defect": j.get("qc_defect", ""),
+                                "photo": j.get("qc_photo_path", ""),
+                                "worker_done": j.get("defect_rectified", False),
+                                "action": j.get("rectification_note", ""),
+                                "qc_approved": j.get("defect_rectified", False),
+                                "time": j.get("start_time", "")
+                            })
+                    if "status" not in j:
+                        j["status"] = "In Progress"
+                return data
         except Exception:
             return []
     return []
@@ -42,11 +58,11 @@ def save_data(data):
 if "jobs_db" not in st.session_state:
     st.session_state.jobs_db = load_data()
 
-# DIGITAL CERTIFICATE VIEW (QR TARGET)
+# 1. DIGITAL CERTIFICATE VIEW (RENDERED CLEANLY FOR QR SCANS)
 query_params = st.query_params
 if "verify_job" in query_params:
     verified_id = query_params["verify_job"]
-    matched = [j for j in st.session_state.jobs_db if j["job_id"] == verified_id]
+    matched = [j for j in st.session_state.jobs_db if j.get("job_id") == verified_id]
     
     if matched:
         job = matched[0]
@@ -65,33 +81,42 @@ if "verify_job" in query_params:
         st.write("")
         col1, col2 = st.columns(2)
         with col1:
-            st.info(f"**Job ID:** {job['job_id']}\n\n**Worker:** {job['worker']}")
+            st.info(f"**Job ID:** {job.get('job_id', 'N/A')}\n\n**Worker:** {job.get('worker', 'N/A')}")
         with col2:
-            st.info(f"**Start Time:** {job['start_time']}\n\n**Completed At:** {job.get('completed_time', 'N/A')}")
+            st.info(f"**Start Time:** {job.get('start_time', 'N/A')}\n\n**Completed At:** {job.get('completed_time', 'N/A')}")
 
         st.markdown("#### 📋 Scope of Work")
-        st.markdown(f"<div style='background-color: #f8fafc; border-left: 5px solid #003366; padding: 12px; border-radius: 4px;'>{job['desc']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #f8fafc; border-left: 5px solid #003366; padding: 12px; border-radius: 4px;'>{job.get('desc', 'N/A')}</div>", unsafe_allow_html=True)
         
         st.markdown("#### 🛠️ Rectifications & Approvals Log")
-        if not job["rectifications"]:
+        rects = job.get("rectifications", [])
+        if not rects:
             st.success("Clean pass. No defects reported during inspection.")
         else:
-            for idx, r in enumerate(job["rectifications"]):
+            for idx, r in enumerate(rects):
                 st.markdown(f"""
                 <div style='background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #22c55e; padding: 10px; border-radius: 4px; margin-bottom: 8px;'>
-                    <b>Issue #{idx+1}:</b> {r['defect']}<br/>
-                    <b>Worker Action:</b> {r['action']}<br/>
+                    <b>Issue #{idx+1}:</b> {r.get('defect', '-')}<br/>
+                    <b>Worker Action:</b> {r.get('action', '-')}<br/>
                     <b>Verification:</b> <span style='color: #15803d; font-weight: bold;'>✓ Verified &amp; Approved by QC</span>
                 </div>
                 """, unsafe_allow_html=True)
+                if r.get("photo") and os.path.exists(r["photo"]):
+                    st.image(r["photo"], width=200)
 
         st.write("")
         if st.button("⬅️ Return to Portal"):
             st.query_params.clear()
             st.rerun()
         st.stop()
+    else:
+        st.error(f"Job Record '{verified_id}' not found.")
+        if st.button("⬅️ Back"):
+            st.query_params.clear()
+            st.rerun()
+        st.stop()
 
-# PDF GENERATOR
+# 2. PDF GENERATOR
 def create_pdf(job, qr_link_url):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -107,8 +132,8 @@ def create_pdf(job, qr_link_url):
     elements.append(Paragraph("GENERATOR FABRICATION &amp; QA/QC CLEARANCE CERTIFICATE", sub_style))
 
     job_info = [
-        [Paragraph(f"<b>Job ID:</b> {job['job_id']}", cell_style), Paragraph(f"<b>Start Date/Time:</b> {job['start_time']}", cell_style)],
-        [Paragraph(f"<b>Lead Worker:</b> {job['worker']}", cell_style), Paragraph(f"<b>Completed Time:</b> {job.get('completed_time', 'N/A')}", cell_style)]
+        [Paragraph(f"<b>Job ID:</b> {job.get('job_id', '')}", cell_style), Paragraph(f"<b>Start Date/Time:</b> {job.get('start_time', '')}", cell_style)],
+        [Paragraph(f"<b>Lead Worker:</b> {job.get('worker', '')}", cell_style), Paragraph(f"<b>Completed Time:</b> {job.get('completed_time', 'N/A')}", cell_style)]
     ]
     t1 = Table(job_info, colWidths=[270, 270])
     t1.setStyle(TableStyle([
@@ -121,13 +146,14 @@ def create_pdf(job, qr_link_url):
 
     body_info = [
         [Paragraph("<b>Job Scope / Fabrication Details:</b>", header_cell)],
-        [Paragraph(job['desc'], cell_style)]
+        [Paragraph(job.get('desc', ''), cell_style)]
     ]
     
-    if job["rectifications"]:
+    rects = job.get("rectifications", [])
+    if rects:
         body_info.append([Paragraph("<b>QC Rectification History &amp; Approval Log:</b>", header_cell)])
-        for i, r in enumerate(job["rectifications"]):
-            body_info.append([Paragraph(f"<b>#{i+1} Defect:</b> {r['defect']}<br/><b>Action:</b> {r['action']} - <font color='green'><b>[QC Approved]</b></font>", cell_style)])
+        for i, r in enumerate(rects):
+            body_info.append([Paragraph(f"<b>#{i+1} Defect:</b> {r.get('defect', '')}<br/><b>Action:</b> {r.get('action', '')} - <font color='green'><b>[QC Approved]</b></font>", cell_style)])
     else:
         body_info.append([Paragraph("<b>QC Inspection Status:</b>", header_cell)])
         body_info.append([Paragraph("No defects reported. Inspected and approved to factory standards.", cell_style)])
@@ -201,46 +227,46 @@ with tab1:
     st.write("---")
     st.subheader("2. Active Jobs & Rectification Pipeline")
     
-    active_jobs = [j for j in st.session_state.jobs_db if j["status"] != "Completed"]
+    active_jobs = [j for j in st.session_state.jobs_db if j.get("status") != "Completed"]
     if not active_jobs:
         st.info("No active jobs currently in progress.")
     else:
         for job in active_jobs:
+            rects = job.get("rectifications", [])
+            
             # Check if all rectifications have both worker fix and QC approval
             all_rect_cleared = True
-            if job["rectifications"]:
-                for r in job["rectifications"]:
-                    if not (r["worker_done"] and r["qc_approved"]):
+            if rects:
+                for r in rects:
+                    if not (r.get("worker_done") and r.get("qc_approved")):
                         all_rect_cleared = False
                         break
 
-            status_icon = "🟢" if all_rect_cleared and job["rectifications"] else ("🔴" if job["rectifications"] else "🟡")
+            status_icon = "🟢" if (all_rect_cleared and rects) else ("🔴" if rects else "🟡")
             
-            with st.expander(f"{status_icon} {job['job_id']} - {job['worker']} [{job['status']}]", expanded=True):
-                st.write(f"**Description:** {job['desc']}")
-                st.caption(f"Started: {job['start_time']}")
+            with st.expander(f"{status_icon} {job.get('job_id', '')} - {job.get('worker', '')} [{job.get('status', 'In Progress')}]", expanded=True):
+                st.write(f"**Description:** {job.get('desc', '')}")
+                st.caption(f"Started: {job.get('start_time', '')}")
 
                 # RECTIFICATIONS LIST
-                if job["rectifications"]:
+                if rects:
                     st.markdown("#### ⚠️ QC Rectification Items:")
-                    for idx, r in enumerate(job["rectifications"]):
-                        st.markdown(f"**Item #{idx+1}:** {r['defect']} *(Logged: {r.get('time', 'N/A')})*")
+                    for idx, r in enumerate(rects):
+                        st.markdown(f"**Item #{idx+1}:** {r.get('defect', '')} *(Logged: {r.get('time', 'N/A')})*")
                         if r.get("photo") and os.path.exists(r["photo"]):
                             st.image(r["photo"], width=180)
                         
                         col_w, col_qc = st.columns(2)
                         with col_w:
-                            # Worker Fix Checkbox & Action
-                            w_tick = st.checkbox(f"Worker: Fixed #{idx+1}", value=r["worker_done"], key=f"w_chk_{job['job_id']}_{idx}")
-                            action_txt = st.text_input(f"Action Taken #{idx+1}", value=r["action"], key=f"act_{job['job_id']}_{idx}", placeholder="e.g. Ground down and re-welded")
+                            w_tick = st.checkbox(f"Worker: Fixed #{idx+1}", value=r.get("worker_done", False), key=f"w_chk_{job.get('job_id')}_{idx}")
+                            action_txt = st.text_input(f"Action Taken #{idx+1}", value=r.get("action", ""), key=f"act_{job.get('job_id')}_{idx}", placeholder="e.g. Ground down and re-welded")
                             r["worker_done"] = w_tick
                             r["action"] = action_txt
 
                         with col_qc:
-                            # QC Approval Checkbox
-                            qc_tick = st.checkbox(f"QC: Verified & Approved #{idx+1}", value=r["qc_approved"], disabled=(not r["worker_done"]), key=f"qc_chk_{job['job_id']}_{idx}")
+                            qc_tick = st.checkbox(f"QC: Verified & Approved #{idx+1}", value=r.get("qc_approved", False), disabled=(not r.get("worker_done", False)), key=f"qc_chk_{job.get('job_id')}_{idx}")
                             r["qc_approved"] = qc_tick
-                            if not r["worker_done"]:
+                            if not r.get("worker_done", False):
                                 st.caption("*(Awaiting worker fix first)*")
                         st.divider()
                     
@@ -252,16 +278,16 @@ with tab1:
                 st.write("---")
                 if not all_rect_cleared:
                     st.warning("🔒 Cannot complete job: All QC defect items must be fixed by Worker AND verified/approved by QC.")
-                    st.checkbox("✅ Mark Job as COMPLETED", disabled=True, help="Disabled until all rectifications are approved by QC.")
-                    st.button(f"Submit Final Job ({job['job_id']})", disabled=True)
+                    st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", disabled=True, key=f"dis_comp_{job.get('job_id')}", help="Disabled until all rectifications are approved by QC.")
+                    st.button(f"Submit Final Job ({job.get('job_id')})", disabled=True, key=f"dis_btn_{job.get('job_id')}")
                 else:
-                    is_comp = st.checkbox(f"✅ Mark Job as COMPLETED ({job['job_id']})", key=f"comp_{job['job_id']}")
-                    if st.button(f"Submit Final Job ({job['job_id']})", key=f"sub_{job['job_id']}"):
+                    is_comp = st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", key=f"comp_{job.get('job_id')}")
+                    if st.button(f"Submit Final Job ({job.get('job_id')})", key=f"sub_{job.get('job_id')}"):
                         if is_comp:
                             job["status"] = "Completed"
                             job["completed_time"] = get_sl_time()
                             save_data(st.session_state.jobs_db)
-                            st.success(f"Job {job['job_id']} COMPLETED successfully!")
+                            st.success(f"Job {job.get('job_id')} COMPLETED successfully!")
                             st.rerun()
                         else:
                             st.warning("Please tick the completion checkbox above before submitting.")
@@ -270,17 +296,18 @@ with tab1:
     st.write("---")
     st.subheader("3. Completed Jobs Archive")
     
-    completed_jobs = [j for j in st.session_state.jobs_db if j["status"] == "Completed"]
+    completed_jobs = [j for j in st.session_state.jobs_db if j.get("status") == "Completed"]
     if not completed_jobs:
         st.caption("No completed jobs yet.")
     else:
         for c_idx, c_job in enumerate(completed_jobs):
-            with st.expander(f"🟢 {c_job['job_id']} - {c_job['worker']} (COMPLETED)"):
-                st.write(f"**Description:** {c_job['desc']}")
+            c_rects = c_job.get("rectifications", [])
+            with st.expander(f"🟢 {c_job.get('job_id', '')} - {c_job.get('worker', '')} (COMPLETED)"):
+                st.write(f"**Description:** {c_job.get('desc', '')}")
                 st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
-                st.write(f"**Rectifications Cleared:** {len(c_job['rectifications'])} items verified.")
+                st.write(f"**Rectifications Cleared:** {len(c_rects)} items verified.")
                 
-                live_qr_url = f"{LIVE_APP_URL}/?verify_job={c_job['job_id']}"
+                live_qr_url = f"{LIVE_APP_URL}/?verify_job={c_job.get('job_id', '')}"
                 
                 qr_preview = qrcode.QRCode(box_size=3, border=1)
                 qr_preview.add_data(live_qr_url)
@@ -290,43 +317,43 @@ with tab1:
                 p_img.save(img_io, format='PNG')
                 st.image(img_io.getvalue(), caption="Scan QR with Phone Camera to View Online Certificate", width=130)
                 
-                if st.button(f"👁️ View Digital Certificate ({c_job['job_id']})", key=f"view_{c_job['job_id']}"):
-                    st.query_params["verify_job"] = c_job['job_id']
+                if st.button(f"👁️ View Digital Certificate ({c_job.get('job_id', '')})", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
+                    st.query_params["verify_job"] = c_job.get('job_id', '')
                     st.rerun()
 
                 pdf_bytes = create_pdf(c_job, live_qr_url)
                 st.download_button(
-                    label=f"📄 Download / Print PDF ({c_job['job_id']})",
+                    label=f"📄 Download / Print PDF ({c_job.get('job_id', '')})",
                     data=pdf_bytes,
-                    file_name=f"TPL_Certificate_{c_job['job_id']}.pdf",
+                    file_name=f"TPL_Certificate_{c_job.get('job_id', '')}.pdf",
                     mime="application/pdf",
-                    key=f"dl_{c_job['job_id']}_{c_idx}"
+                    key=f"dl_{c_job.get('job_id', '')}_{c_idx}"
                 )
                 
-                if st.button(f"🗑️ Delete Record ({c_job['job_id']})", key=f"del_{c_job['job_id']}_{c_idx}"):
-                    st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j["job_id"] != c_job["job_id"]]
+                if st.button(f"🗑️ Delete Record ({c_job.get('job_id', '')})", key=f"del_{c_job.get('job_id', '')}_{c_idx}"):
+                    st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != c_job.get("job_id")]
                     save_data(st.session_state.jobs_db)
-                    st.success(f"Job {c_job['job_id']} deleted!")
+                    st.success(f"Job {c_job.get('job_id')} deleted!")
                     st.rerun()
 
-# TAB 2: QC INSPECTOR (ADD MULTIPLE DEFECTS)
+# TAB 2: QC INSPECTOR
 with tab2:
     st.subheader("QC Defect Inspection & Item Addition")
     
-    ongoing = [j for j in st.session_state.jobs_db if j["status"] != "Completed"]
+    ongoing = [j for j in st.session_state.jobs_db if j.get("status") != "Completed"]
     if not ongoing:
         st.info("No active jobs available for inspection.")
     else:
-        qc_job_ids = [j["job_id"] for j in ongoing]
+        qc_job_ids = [j.get("job_id") for j in ongoing if j.get("job_id")]
         target_id = st.selectbox("Select Job ID to Inspect", qc_job_ids)
-        target_job = next(j for j in st.session_state.jobs_db if j["job_id"] == target_id)
+        target_job = next(j for j in st.session_state.jobs_db if j.get("job_id") == target_id)
         
-        st.markdown(f"**Work Scope:** {target_job['desc']}")
-        st.markdown(f"**Assigned Worker:** {target_job['worker']}")
+        st.markdown(f"**Work Scope:** {target_job.get('desc', '')}")
+        st.markdown(f"**Assigned Worker:** {target_job.get('worker', '')}")
 
-        # Show existing defects
-        if target_job["rectifications"]:
-            st.markdown(f"**Current Pending Defect Count:** {len(target_job['rectifications'])}")
+        curr_rects = target_job.get("rectifications", [])
+        if curr_rects:
+            st.markdown(f"**Current Pending Defect Count:** {len(curr_rects)}")
 
         with st.form("qc_add_defect_form", clear_on_submit=True):
             defect_text = st.text_area("New Defect / Issue Found", placeholder="Describe weld porosity, paint scratch, misaligned holes...")
@@ -336,9 +363,12 @@ with tab2:
             if add_defect_btn and defect_text:
                 photo_path = ""
                 if photo_file:
-                    photo_path = os.path.join(PHOTOS_DIR, f"{target_id}_defect_{len(target_job['rectifications'])+1}.png")
+                    photo_path = os.path.join(PHOTOS_DIR, f"{target_id}_defect_{len(curr_rects)+1}.png")
                     with open(photo_path, "wb") as f:
                         f.write(photo_file.getbuffer())
+
+                if "rectifications" not in target_job:
+                    target_job["rectifications"] = []
 
                 target_job["rectifications"].append({
                     "defect": defect_text.strip(),
@@ -350,5 +380,5 @@ with tab2:
                 })
                 target_job["status"] = "Needs Rectification"
                 save_data(st.session_state.jobs_db)
-                st.success(f"Defect item added to {target_id}! Workshop can now see and rectify it.")
+                st.success(f"Defect item added to {target_id}!")
                 st.rerun()
