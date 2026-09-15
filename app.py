@@ -20,7 +20,7 @@ PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
 # EXACT DIRECT PUBLIC LINK
-PUBLIC_DOMAIN = "https://epaiqfnt5gkqh8brx.streamlit.app"
+PUBLIC_DOMAIN = "https://tpl-fabrication-app-evtpzepaiqfnt5gkqh8brx.streamlit.app"
 
 # SRI LANKA TIMEZONE (Asia/Colombo)
 def get_sl_time():
