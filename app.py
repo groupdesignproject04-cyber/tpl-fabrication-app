@@ -46,6 +46,9 @@ def migrate_job(j):
         j["rectifications"] = []
     if "status" not in j:
         j["status"] = "In Progress"
+    # Ensure every job has a recorded start date/time.
+    if not j.get("start_time"):
+        j["start_time"] = get_sl_time()
 
     # Migrate old single-photo fields to new multi-photo fields.
     for r in j["rectifications"]:
@@ -312,12 +315,11 @@ def generate_qr_png(url):
 st.title("⚡ TPL Generator Fabrication & QA/QC Portal")
 
 st.subheader("1. Assign New Fabrication Job")
-current_sl_time = get_sl_time()
 with st.form("assign_job_form", clear_on_submit=True):
     new_job_id = st.text_input("Job ID", placeholder="e.g. TPL-GEN-002")
     new_desc = st.text_area("Job Scope / Fabrication Details", placeholder="Specify canopy dimensions, steel grade, welding specs...")
     new_worker = st.text_input("Assigned Employee Name")
-    st.caption(f"🕒 Timestamp (Sri Lanka): **{current_sl_time}**")
+    st.caption("🕒 Start Date/Time will be recorded automatically when you click **Assign Job** (Sri Lanka time).")
     assign_btn = st.form_submit_button("Assign Job")
     if assign_btn and new_job_id and new_desc and new_worker:
         st.session_state.jobs_db.append({
@@ -325,7 +327,7 @@ with st.form("assign_job_form", clear_on_submit=True):
             "job_id": new_job_id.strip(),
             "desc": new_desc.strip(),
             "worker": new_worker.strip(),
-            "start_time": current_sl_time,
+            "start_time": get_sl_time(),
             "status": "In Progress",
             "rectifications": [],
             "qc_final_approval_photos": []
