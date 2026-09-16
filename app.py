@@ -127,6 +127,17 @@ st.session_state.jobs_db = current_db
 if "delete_confirm_id" not in st.session_state:
     st.session_state.delete_confirm_id = None
 
+# Uploader version counters: changing the widget key after a successful save
+# clears the previous upload, so Streamlit cannot save the same file again on rerun.
+if "photo_uploader_versions" not in st.session_state:
+    st.session_state.photo_uploader_versions = {}
+
+def uploader_version(name):
+    return st.session_state.photo_uploader_versions.get(name, 0)
+
+def bump_uploader_version(name):
+    st.session_state.photo_uploader_versions[name] = uploader_version(name) + 1
+
 # =======================================================
 # 1. DIGITAL CERTIFICATE VIEW
 # =======================================================
@@ -371,21 +382,23 @@ else:
                                 r["fixed_photos"] = fixed_paths
                                 save_data(st.session_state.jobs_db)
                                 st.rerun()
+                        fixed_uploader_id = f"fixed_img_{record_id}_{idx}"
                         new_fixed = st.file_uploader(
                             f"Upload Fixed Photo(s) #{idx+1} (Optional)",
                             type=["jpg","jpeg","png"],
                             accept_multiple_files=True,
-                            key=f"fixed_img_{record_id}_{idx}"
+                            key=f"{fixed_uploader_id}_v{uploader_version(fixed_uploader_id)}"
                         )
                         if new_fixed:
-                            existing_names = set(fixed_paths)
+                            added_count = 0
                             for uploaded in new_fixed:
                                 path = save_uploaded_file(uploaded, f"{record_id}_fixed_{idx+1}")
-                                if path not in existing_names:
-                                    fixed_paths.append(path)
+                                fixed_paths.append(path)
+                                added_count += 1
                             r["fixed_photos"] = fixed_paths
                             save_data(st.session_state.jobs_db)
-                            st.success(f"{len(new_fixed)} fixed photo(s) attached!")
+                            bump_uploader_version(fixed_uploader_id)
+                            st.success(f"{added_count} fixed photo(s) attached successfully. You can upload more photos.")
                             st.rerun()
                     st.divider()
                 save_data(st.session_state.jobs_db)
@@ -430,18 +443,22 @@ else:
                     save_data(st.session_state.jobs_db)
                     st.rerun()
 
+            approval_uploader_id = f"qc_appr_{record_id}"
             qc_appr_files = st.file_uploader(
                 f"📸 Upload QC Approval Photo(s) / Sign ({job.get('job_id')})",
                 type=["jpg","jpeg","png"],
                 accept_multiple_files=True,
-                key=f"qc_appr_{record_id}"
+                key=f"{approval_uploader_id}_v{uploader_version(approval_uploader_id)}"
             )
             if qc_appr_files:
+                added_count = 0
                 for uploaded in qc_appr_files:
                     approval_paths.append(save_uploaded_file(uploaded, f"{record_id}_qc_approval"))
+                    added_count += 1
                 job["qc_final_approval_photos"] = approval_paths
                 save_data(st.session_state.jobs_db)
-                st.success(f"{len(qc_appr_files)} QC approval photo(s) attached!")
+                bump_uploader_version(approval_uploader_id)
+                st.success(f"{added_count} QC approval photo(s) attached successfully. You can upload more photos.")
                 st.rerun()
 
             if approval_paths:
