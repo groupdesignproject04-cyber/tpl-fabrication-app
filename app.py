@@ -20,6 +20,17 @@ PHOTOS_DIR = "uploaded_photos"
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 PUBLIC_DOMAIN = "https://tpl-fabrication-app-evtpzepaiqfnt5gkqh8brx.streamlit.app"
 
+# =======================================================
+# LOGIN CREDENTIALS
+# Change these usernames/passwords whenever you like.
+# "editor"  -> can assign jobs, log defects, upload photos, complete/delete jobs
+# "viewer"  -> read-only: can browse jobs and view/download certificates only
+# =======================================================
+USERS = {
+    "tpl_editor": {"password": "Editor@TPL2026", "role": "editor"},
+    "tpl_viewer": {"password": "Viewer@TPL2026", "role": "viewer"},
+}
+
 
 def get_sl_time():
     sl_tz = pytz.timezone("Asia/Colombo")
@@ -46,11 +57,9 @@ def migrate_job(j):
         j["rectifications"] = []
     if "status" not in j:
         j["status"] = "In Progress"
-    # Ensure every job has a recorded start date/time.
     if not j.get("start_time"):
         j["start_time"] = get_sl_time()
 
-    # Migrate old single-photo fields to new multi-photo fields.
     for r in j["rectifications"]:
         if "photos" not in r:
             r["photos"] = normalize_photo_list(r.get("photo"))
@@ -92,7 +101,6 @@ def safe_remove_file(path):
 
 
 def save_uploaded_file(uploaded_file, prefix):
-    """Save one uploaded image with a unique filename and return its path."""
     ext = os.path.splitext(uploaded_file.name)[1].lower()
     if ext not in [".jpg", ".jpeg", ".png"]:
         ext = ".png"
@@ -103,22 +111,25 @@ def save_uploaded_file(uploaded_file, prefix):
     return path
 
 
-def photo_columns(photo_paths, prefix, width=150):
-    """Display saved photos with an easy remove button."""
+def photo_columns(photo_paths, prefix, width=150, allow_remove=True):
+    """Display saved photos. Remove button only shown when allow_remove=True."""
     valid = [p for p in photo_paths if p and os.path.exists(p)]
     if not valid:
         return False
 
     for i, path in enumerate(valid):
-        col1, col2 = st.columns([4, 1])
-        with col1:
+        if allow_remove:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.image(path, width=width, caption=f"Photo {i + 1}")
+            with col2:
+                st.write("")
+                if st.button("🗑️ Remove", key=f"{prefix}_remove_{i}_{uuid.uuid5(uuid.NAMESPACE_URL, path)}"):
+                    safe_remove_file(path)
+                    photo_paths.remove(path)
+                    return True
+        else:
             st.image(path, width=width, caption=f"Photo {i + 1}")
-        with col2:
-            st.write("")
-            if st.button("🗑️ Remove", key=f"{prefix}_remove_{i}_{uuid.uuid5(uuid.NAMESPACE_URL, path)}"):
-                safe_remove_file(path)
-                photo_paths.remove(path)
-                return True
     return False
 
 
@@ -130,8 +141,6 @@ st.session_state.jobs_db = current_db
 if "delete_confirm_id" not in st.session_state:
     st.session_state.delete_confirm_id = None
 
-# Uploader version counters: changing the widget key after a successful save
-# clears the previous upload, so Streamlit cannot save the same file again on rerun.
 if "photo_uploader_versions" not in st.session_state:
     st.session_state.photo_uploader_versions = {}
 
@@ -142,7 +151,8 @@ def bump_uploader_version(name):
     st.session_state.photo_uploader_versions[name] = uploader_version(name) + 1
 
 # =======================================================
-# 1. DIGITAL CERTIFICATE VIEW
+# 1. DIGITAL CERTIFICATE VIEW (public — no login required,
+#    so anyone scanning the QR code can verify it)
 # =======================================================
 verify_id = st.query_params.get("verify_job")
 
@@ -150,7 +160,6 @@ if verify_id:
     clean_id = str(verify_id).strip().lower()
     matched = [j for j in current_db if str(j.get("record_id", "")).strip().lower() == clean_id]
     if not matched:
-        # Backward compatibility for old QR codes that stored Job ID.
         matched = [j for j in current_db if str(j.get("job_id", "")).strip().lower() == clean_id]
 
     st.markdown("""
@@ -310,33 +319,75 @@ def generate_qr_png(url):
 
 
 # =======================================================
-# 3. MAIN PORTAL
+# 3. LOGIN GATE (applies to the workshop portal only —
+#    the certificate view above is already public)
 # =======================================================
 st.title("⚡ TPL Generator Fabrication & QA/QC Portal")
 
-st.subheader("1. Assign New Fabrication Job")
-with st.form("assign_job_form", clear_on_submit=True):
-    new_job_id = st.text_input("Job ID", placeholder="e.g. TPL-GEN-002")
-    new_desc = st.text_area("Job Scope / Fabrication Details", placeholder="Specify canopy dimensions, steel grade, welding specs...")
-    new_worker = st.text_input("Assigned Employee Name")
-    st.caption("🕒 Start Date/Time will be recorded automatically when you click **Assign Job** (Sri Lanka time).")
-    assign_btn = st.form_submit_button("Assign Job")
-    if assign_btn and new_job_id and new_desc and new_worker:
-        st.session_state.jobs_db.append({
-            "record_id": make_record_id(),
-            "job_id": new_job_id.strip(),
-            "desc": new_desc.strip(),
-            "worker": new_worker.strip(),
-            "start_time": get_sl_time(),
-            "status": "In Progress",
-            "rectifications": [],
-            "qc_final_approval_photos": []
-        })
-        save_data(st.session_state.jobs_db)
-        st.success(f"Job {new_job_id} assigned successfully!")
+if "auth_user" not in st.session_state:
+    st.session_state.auth_user = None
+    st.session_state.auth_role = None
+
+if not st.session_state.auth_user:
+    st.subheader("🔐 Login")
+    with st.form("login_form"):
+        login_username = st.text_input("Username")
+        login_password = st.text_input("Password", type="password")
+        login_btn = st.form_submit_button("Login")
+        if login_btn:
+            user = USERS.get(login_username.strip())
+            if user and user["password"] == login_password:
+                st.session_state.auth_user = login_username.strip()
+                st.session_state.auth_role = user["role"]
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
+    st.stop()
+
+is_editor = st.session_state.auth_role == "editor"
+
+with st.sidebar:
+    st.write(f"👤 Logged in as **{st.session_state.auth_user}**")
+    st.caption(f"Role: {st.session_state.auth_role.capitalize()}")
+    if st.button("Logout"):
+        st.session_state.auth_user = None
+        st.session_state.auth_role = None
         st.rerun()
 
-st.write("---")
+if not is_editor:
+    st.info("👁️ Viewer mode: you can browse jobs and certificates, but editing is disabled.")
+
+# =======================================================
+# 4. MAIN PORTAL
+# =======================================================
+if is_editor:
+    st.subheader("1. Assign New Fabrication Job")
+    with st.form("assign_job_form", clear_on_submit=True):
+        new_job_id = st.text_input("Job ID", placeholder="e.g. TPL-GEN-002")
+        new_desc = st.text_area("Job Scope / Fabrication Details", placeholder="Specify canopy dimensions, steel grade, welding specs...")
+        new_worker = st.text_input("Assigned Employee Name")
+        st.caption("🕒 Start Date/Time will be recorded automatically when you click **Assign Job** (Sri Lanka time).")
+        assign_btn = st.form_submit_button("Assign Job")
+        if assign_btn and new_job_id and new_desc and new_worker:
+            existing_ids = [j.get("job_id", "").strip().lower() for j in st.session_state.jobs_db]
+            if new_job_id.strip().lower() in existing_ids:
+                st.error(f"Job ID '{new_job_id}' already exists. Please use a unique Job ID.")
+            else:
+                st.session_state.jobs_db.append({
+                    "record_id": make_record_id(),
+                    "job_id": new_job_id.strip(),
+                    "desc": new_desc.strip(),
+                    "worker": new_worker.strip(),
+                    "start_time": get_sl_time(),
+                    "status": "In Progress",
+                    "rectifications": [],
+                    "qc_final_approval_photos": []
+                })
+                save_data(st.session_state.jobs_db)
+                st.success(f"Job {new_job_id} assigned successfully!")
+                st.rerun()
+    st.write("---")
+
 st.subheader("2. Ongoing Fabrication & QC Inspection Pipeline")
 active_jobs = [j for j in st.session_state.jobs_db if j.get("status") != "Completed"]
 
@@ -363,7 +414,7 @@ else:
                     defect_paths = normalize_photo_list(r.get("photos", r.get("photo")))
                     if defect_paths:
                         st.markdown("**QC Defect Photos**")
-                        changed = photo_columns(defect_paths, f"defect_{record_id}_{idx}", width=170)
+                        changed = photo_columns(defect_paths, f"defect_{record_id}_{idx}", width=170, allow_remove=is_editor)
                         if changed:
                             r["photos"] = defect_paths
                             save_data(st.session_state.jobs_db)
@@ -371,152 +422,161 @@ else:
 
                     col_w1, col_w2 = st.columns(2)
                     with col_w1:
-                        w_tick = st.checkbox(f"Worker: Completed / Fixed #{idx+1}", value=r.get("worker_done",False), key=f"w_chk_{record_id}_{idx}")
-                        action_txt = st.text_input(f"Action Taken #{idx+1}", value=r.get("action",""), key=f"act_{record_id}_{idx}", placeholder="e.g. Re-welded and ground smooth")
-                        r["worker_done"] = w_tick
-                        r["action"] = action_txt
+                        if is_editor:
+                            w_tick = st.checkbox(f"Worker: Completed / Fixed #{idx+1}", value=r.get("worker_done",False), key=f"w_chk_{record_id}_{idx}")
+                            action_txt = st.text_input(f"Action Taken #{idx+1}", value=r.get("action",""), key=f"act_{record_id}_{idx}", placeholder="e.g. Re-welded and ground smooth")
+                            r["worker_done"] = w_tick
+                            r["action"] = action_txt
+                        else:
+                            st.write(f"Worker Fixed: {'✅ Yes' if r.get('worker_done') else '❌ No'}")
+                            if r.get("action"):
+                                st.write(f"Action Taken: {r.get('action')}")
                     with col_w2:
                         fixed_paths = normalize_photo_list(r.get("fixed_photos", r.get("fixed_photo")))
                         if fixed_paths:
                             st.markdown("**Worker Fixed Proof Photos**")
-                            changed = photo_columns(fixed_paths, f"fixed_{record_id}_{idx}", width=130)
+                            changed = photo_columns(fixed_paths, f"fixed_{record_id}_{idx}", width=130, allow_remove=is_editor)
                             if changed:
                                 r["fixed_photos"] = fixed_paths
                                 save_data(st.session_state.jobs_db)
                                 st.rerun()
-                        fixed_uploader_id = f"fixed_img_{record_id}_{idx}"
-                        new_fixed = st.file_uploader(
-                            f"Upload Fixed Photo(s) #{idx+1} (Optional)",
-                            type=["jpg","jpeg","png"],
-                            accept_multiple_files=True,
-                            key=f"{fixed_uploader_id}_v{uploader_version(fixed_uploader_id)}"
-                        )
-                        if new_fixed:
-                            added_count = 0
-                            for uploaded in new_fixed:
-                                path = save_uploaded_file(uploaded, f"{record_id}_fixed_{idx+1}")
-                                fixed_paths.append(path)
-                                added_count += 1
-                            r["fixed_photos"] = fixed_paths
-                            save_data(st.session_state.jobs_db)
-                            bump_uploader_version(fixed_uploader_id)
-                            st.success(f"{added_count} fixed photo(s) attached successfully. You can upload more photos.")
-                            st.rerun()
+                        if is_editor:
+                            fixed_uploader_id = f"fixed_img_{record_id}_{idx}"
+                            new_fixed = st.file_uploader(
+                                f"Upload Fixed Photo(s) #{idx+1} (Optional)",
+                                type=["jpg","jpeg","png"],
+                                accept_multiple_files=True,
+                                key=f"{fixed_uploader_id}_v{uploader_version(fixed_uploader_id)}"
+                            )
+                            if new_fixed:
+                                added_count = 0
+                                for uploaded in new_fixed:
+                                    path = save_uploaded_file(uploaded, f"{record_id}_fixed_{idx+1}")
+                                    fixed_paths.append(path)
+                                    added_count += 1
+                                r["fixed_photos"] = fixed_paths
+                                save_data(st.session_state.jobs_db)
+                                bump_uploader_version(fixed_uploader_id)
+                                st.success(f"{added_count} fixed photo(s) attached successfully. You can upload more photos.")
+                                st.rerun()
                     st.divider()
                 save_data(st.session_state.jobs_db)
             else:
                 st.success("No defects logged yet. Work progressing normally.")
 
-            st.markdown("#### 🔍 QC Inspector: Log Comment / Defect for this Job")
-            with st.form(f"qc_add_defect_{record_id}", clear_on_submit=True):
-                defect_text = st.text_area("Defect / Rectification Note", placeholder="Describe issue: weld gap, misaligned holes, paint run...", key=f"def_txt_{record_id}")
-                photo_files = st.file_uploader(
-                    "Upload Inspection / Defect Photo(s) (Optional)",
-                    type=["jpg","jpeg","png"],
-                    accept_multiple_files=True,
-                    key=f"def_img_{record_id}"
-                )
-                st.caption("You can select multiple photos at once. Photos are saved only after submitting this rectification issue.")
-                add_defect_btn = st.form_submit_button("➕ Submit Rectification Issue")
-                if add_defect_btn and defect_text:
-                    photo_paths = []
-                    for uploaded in (photo_files or []):
-                        photo_paths.append(save_uploaded_file(uploaded, f"{record_id}_defect_{len(rects)+1}"))
-                    job["rectifications"].append({
-                        "defect": defect_text.strip(),
-                        "photos": photo_paths,
-                        "fixed_photos": [],
-                        "worker_done": False,
-                        "action": "",
-                        "time": get_sl_time()
-                    })
-                    job["status"] = "Needs Rectification"
-                    save_data(st.session_state.jobs_db)
-                    st.success(f"Rectification issue added to {job.get('job_id')}!")
-                    st.rerun()
+            if is_editor:
+                st.markdown("#### 🔍 QC Inspector: Log Comment / Defect for this Job")
+                with st.form(f"qc_add_defect_{record_id}", clear_on_submit=True):
+                    defect_text = st.text_area("Defect / Rectification Note", placeholder="Describe issue: weld gap, misaligned holes, paint run...", key=f"def_txt_{record_id}")
+                    photo_files = st.file_uploader(
+                        "Upload Inspection / Defect Photo(s) (Optional)",
+                        type=["jpg","jpeg","png"],
+                        accept_multiple_files=True,
+                        key=f"def_img_{record_id}"
+                    )
+                    st.caption("You can select multiple photos at once. Photos are saved only after submitting this rectification issue.")
+                    add_defect_btn = st.form_submit_button("➕ Submit Rectification Issue")
+                    if add_defect_btn and defect_text:
+                        photo_paths = []
+                        for uploaded in (photo_files or []):
+                            photo_paths.append(save_uploaded_file(uploaded, f"{record_id}_defect_{len(rects)+1}"))
+                        job["rectifications"].append({
+                            "defect": defect_text.strip(),
+                            "photos": photo_paths,
+                            "fixed_photos": [],
+                            "worker_done": False,
+                            "action": "",
+                            "time": get_sl_time()
+                        })
+                        job["status"] = "Needs Rectification"
+                        save_data(st.session_state.jobs_db)
+                        st.success(f"Rectification issue added to {job.get('job_id')}!")
+                        st.rerun()
 
             st.write("---")
             st.markdown("#### 🛡️ QC Final Clearance Photo(s) (Required for Job Completion)")
             approval_paths = normalize_photo_list(job.get("qc_final_approval_photos", job.get("qc_final_approval_photo")))
             if approval_paths:
-                changed = photo_columns(approval_paths, f"approval_{record_id}", width=180)
+                changed = photo_columns(approval_paths, f"approval_{record_id}", width=180, allow_remove=is_editor)
                 if changed:
                     job["qc_final_approval_photos"] = approval_paths
                     save_data(st.session_state.jobs_db)
                     st.rerun()
 
-            approval_uploader_id = f"qc_appr_{record_id}"
-            qc_appr_files = st.file_uploader(
-                f"📸 Upload QC Approval Photo(s) / Sign ({job.get('job_id')})",
-                type=["jpg","jpeg","png"],
-                accept_multiple_files=True,
-                key=f"{approval_uploader_id}_v{uploader_version(approval_uploader_id)}"
-            )
-            if qc_appr_files:
-                added_count = 0
-                for uploaded in qc_appr_files:
-                    approval_paths.append(save_uploaded_file(uploaded, f"{record_id}_qc_approval"))
-                    added_count += 1
-                job["qc_final_approval_photos"] = approval_paths
-                save_data(st.session_state.jobs_db)
-                bump_uploader_version(approval_uploader_id)
-                st.success(f"{added_count} QC approval photo(s) attached successfully. You can upload more photos.")
-                st.rerun()
+            if is_editor:
+                approval_uploader_id = f"qc_appr_{record_id}"
+                qc_appr_files = st.file_uploader(
+                    f"📸 Upload QC Approval Photo(s) / Sign ({job.get('job_id')})",
+                    type=["jpg","jpeg","png"],
+                    accept_multiple_files=True,
+                    key=f"{approval_uploader_id}_v{uploader_version(approval_uploader_id)}"
+                )
+                if qc_appr_files:
+                    added_count = 0
+                    for uploaded in qc_appr_files:
+                        approval_paths.append(save_uploaded_file(uploaded, f"{record_id}_qc_approval"))
+                        added_count += 1
+                    job["qc_final_approval_photos"] = approval_paths
+                    save_data(st.session_state.jobs_db)
+                    bump_uploader_version(approval_uploader_id)
+                    st.success(f"{added_count} QC approval photo(s) attached successfully. You can upload more photos.")
+                    st.rerun()
 
             if approval_paths:
                 st.caption(f"{len(approval_paths)} QC approval photo(s) saved.")
 
-            st.write("---")
-            can_complete = all_worker_fixed and any(os.path.exists(p) for p in approval_paths)
-            if not can_complete:
-                missing_items = []
-                if not all_worker_fixed:
-                    missing_items.append("Worker must mark all defects as Fixed")
-                if not any(os.path.exists(p) for p in approval_paths):
-                    missing_items.append("QC Approval Photo must be uploaded")
-                st.warning(f"🔒 Completion Locked: {', and '.join(missing_items)}.")
-                st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", disabled=True, key=f"dis_comp_{record_id}")
-                st.button(f"Submit Final Job ({job.get('job_id')})", disabled=True, key=f"dis_btn_{record_id}")
-            else:
-                is_comp = st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", key=f"comp_{record_id}")
-                if st.button(f"Submit Final Job ({job.get('job_id')})", key=f"sub_{record_id}"):
-                    if is_comp:
-                        job["status"] = "Completed"
-                        job["completed_time"] = get_sl_time()
-                        save_data(st.session_state.jobs_db)
-                        st.success(f"Job {job.get('job_id')} COMPLETED successfully!")
-                        st.rerun()
-                    else:
-                        st.warning("Please tick the completion checkbox above before submitting.")
+            if is_editor:
+                st.write("---")
+                can_complete = all_worker_fixed and any(os.path.exists(p) for p in approval_paths)
+                if not can_complete:
+                    missing_items = []
+                    if not all_worker_fixed:
+                        missing_items.append("Worker must mark all defects as Fixed")
+                    if not any(os.path.exists(p) for p in approval_paths):
+                        missing_items.append("QC Approval Photo must be uploaded")
+                    st.warning(f"🔒 Completion Locked: {', and '.join(missing_items)}.")
+                    st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", disabled=True, key=f"dis_comp_{record_id}")
+                    st.button(f"Submit Final Job ({job.get('job_id')})", disabled=True, key=f"dis_btn_{record_id}")
+                else:
+                    is_comp = st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", key=f"comp_{record_id}")
+                    if st.button(f"Submit Final Job ({job.get('job_id')})", key=f"sub_{record_id}"):
+                        if is_comp:
+                            job["status"] = "Completed"
+                            job["completed_time"] = get_sl_time()
+                            save_data(st.session_state.jobs_db)
+                            st.success(f"Job {job.get('job_id')} COMPLETED successfully!")
+                            st.rerun()
+                        else:
+                            st.warning("Please tick the completion checkbox above before submitting.")
 
-            st.write("---")
-            act_del_key = f"active_{record_id}"
-            if st.session_state.delete_confirm_id == act_del_key:
-                st.error(f"⚠️ Are you sure you want to delete ongoing job **{job.get('job_id')}**?")
-                conf_c1, conf_c2 = st.columns(2)
-                with conf_c1:
-                    if st.button("Yes, Delete Job", key=f"act_yes_{record_id}"):
-                        for r in job.get("rectifications", []):
-                            for p in normalize_photo_list(r.get("photos", [])) + normalize_photo_list(r.get("fixed_photos", [])):
+                st.write("---")
+                act_del_key = f"active_{record_id}"
+                if st.session_state.delete_confirm_id == act_del_key:
+                    st.error(f"⚠️ Are you sure you want to delete ongoing job **{job.get('job_id')}**?")
+                    conf_c1, conf_c2 = st.columns(2)
+                    with conf_c1:
+                        if st.button("Yes, Delete Job", key=f"act_yes_{record_id}"):
+                            for r in job.get("rectifications", []):
+                                for p in normalize_photo_list(r.get("photos", [])) + normalize_photo_list(r.get("fixed_photos", [])):
+                                    safe_remove_file(p)
+                            for p in normalize_photo_list(job.get("qc_final_approval_photos", [])):
                                 safe_remove_file(p)
-                        for p in normalize_photo_list(job.get("qc_final_approval_photos", [])):
-                            safe_remove_file(p)
-                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("record_id") != record_id]
-                        save_data(st.session_state.jobs_db)
-                        st.session_state.delete_confirm_id = None
-                        st.success(f"Job {job.get('job_id')} permanently deleted!")
+                            st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("record_id") != record_id]
+                            save_data(st.session_state.jobs_db)
+                            st.session_state.delete_confirm_id = None
+                            st.success(f"Job {job.get('job_id')} permanently deleted!")
+                            st.rerun()
+                    with conf_c2:
+                        if st.button("No, Cancel", key=f"act_no_{record_id}"):
+                            st.session_state.delete_confirm_id = None
+                            st.rerun()
+                else:
+                    if st.button(f"🗑️ Delete This Job ({job.get('job_id')})", key=f"act_del_btn_{record_id}"):
+                        st.session_state.delete_confirm_id = act_del_key
                         st.rerun()
-                with conf_c2:
-                    if st.button("No, Cancel", key=f"act_no_{record_id}"):
-                        st.session_state.delete_confirm_id = None
-                        st.rerun()
-            else:
-                if st.button(f"🗑️ Delete This Job ({job.get('job_id')})", key=f"act_del_btn_{record_id}"):
-                    st.session_state.delete_confirm_id = act_del_key
-                    st.rerun()
 
 # =======================================================
-# 4. COMPLETED JOBS ARCHIVE
+# 5. COMPLETED JOBS ARCHIVE
 # =======================================================
 st.write("---")
 st.subheader("3. Completed Jobs Archive")
@@ -555,12 +615,13 @@ else:
                 pdf_bytes = create_pdf(c_job, direct_qr_url)
                 st.download_button(label="📄 Print PDF Certificate", data=pdf_bytes, file_name=f"TPL_{c_job.get('job_id')}_Certificate.pdf", mime="application/pdf", key=f"dl_{record_id}_{c_idx}")
             with btn_col3:
-                comp_del_key = f"completed_{record_id}"
-                if st.button("🗑️ Delete", key=f"del_btn_{record_id}_{c_idx}"):
-                    st.session_state.delete_confirm_id = comp_del_key
-                    st.rerun()
+                if is_editor:
+                    comp_del_key = f"completed_{record_id}"
+                    if st.button("🗑️ Delete", key=f"del_btn_{record_id}_{c_idx}"):
+                        st.session_state.delete_confirm_id = comp_del_key
+                        st.rerun()
 
-            if st.session_state.delete_confirm_id == f"completed_{record_id}":
+            if is_editor and st.session_state.delete_confirm_id == f"completed_{record_id}":
                 st.write("")
                 st.error(f"⚠️ Are you sure you want to delete completed record **{c_job.get('job_id')}**?")
                 conf_c1, conf_c2 = st.columns(2)
