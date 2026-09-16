@@ -27,8 +27,8 @@ PUBLIC_DOMAIN = "https://tpl-fabrication-app-evtpzepaiqfnt5gkqh8brx.streamlit.ap
 # "viewer"  -> read-only: can browse jobs and view/download certificates only
 # =======================================================
 USERS = {
-    "tpl_editor": {"password": "Editor@TPL2026", "role": "editor"},
-    "tpl_viewer": {"password": "Viewer@TPL2026", "role": "viewer"},
+    "tpl_e": {"password": "E112233", "role": "editor"},
+    "tpl_v": {"password": "V0000", "role": "viewer"},
 }
 
 
