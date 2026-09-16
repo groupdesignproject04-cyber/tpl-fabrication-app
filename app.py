@@ -6,6 +6,7 @@ import io
 import os
 import json
 import base64
+import uuid
 import qrcode
 from PIL import Image
 from reportlab.lib.pagesizes import letter
@@ -28,12 +29,23 @@ def get_sl_time():
     return datetime.now(sl_tz).strftime("%Y-%m-%d %I:%M %p")
 
 # DATABASE PERSISTENCE
+def make_record_id():
+    """Create a unique internal ID for each database record.
+    This is different from Job ID because the same Job ID may be assigned
+    to more than one employee/record.
+    """
+    return f"REC-{uuid.uuid4().hex[:12].upper()}"
+
 def load_data():
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r") as f:
                 data = json.load(f)
                 for j in data:
+                    # Backward compatibility: older records did not have an
+                    # internal unique record_id. Add one automatically.
+                    if not j.get("record_id"):
+                        j["record_id"] = make_record_id()
                     if "rectifications" not in j:
                         j["rectifications"] = []
                     if "status" not in j:
@@ -50,6 +62,8 @@ def save_data(data):
         json.dump(data, f, indent=4)
 
 current_db = load_data()
+# Persist automatically generated record IDs for legacy records.
+save_data(current_db)
 st.session_state.jobs_db = current_db
 
 if "delete_confirm_id" not in st.session_state:
@@ -62,7 +76,11 @@ verify_id = st.query_params.get("verify_job")
 
 if verify_id:
     clean_id = str(verify_id).strip().lower()
-    matched = [j for j in current_db if str(j.get("job_id", "")).strip().lower() == clean_id]
+    # New QR codes use record_id, so duplicate Job IDs can be distinguished.
+    # Fall back to Job ID for old QR codes created by earlier app versions.
+    matched = [j for j in current_db if str(j.get("record_id", "")).strip().lower() == clean_id]
+    if not matched:
+        matched = [j for j in current_db if str(j.get("job_id", "")).strip().lower() == clean_id]
     
     st.markdown("""
     <style>
@@ -308,6 +326,7 @@ current_sl_time = get_sl_time()
 
 with st.form("assign_job_form", clear_on_submit=True):
     new_job_id = st.text_input("Job ID", placeholder="e.g. TPL-GEN-002")
+    st.caption("ℹ️ The same Job ID can be assigned to multiple records/employees; the system uses an internal unique Record ID to keep each record separate.")
     new_desc = st.text_area("Job Scope / Fabrication Details", placeholder="Specify canopy dimensions, steel grade, welding specs...")
     new_worker = st.text_input("Assigned Employee Name")
     st.caption(f"🕒 Timestamp (Sri Lanka): **{current_sl_time}**")
@@ -315,6 +334,7 @@ with st.form("assign_job_form", clear_on_submit=True):
     
     if assign_btn and new_job_id and new_desc and new_worker:
         st.session_state.jobs_db.append({
+            "record_id": make_record_id(),
             "job_id": new_job_id.strip(),
             "desc": new_desc.strip(),
             "worker": new_worker.strip(),
@@ -337,6 +357,9 @@ if not active_jobs:
     st.info("No active jobs currently in progress.")
 else:
     for a_idx, job in enumerate(active_jobs):
+        record_id = job.get("record_id") or make_record_id()
+        if not job.get("record_id"):
+            job["record_id"] = record_id
         rects = job.get("rectifications", [])
         all_worker_fixed = True
         if rects:
@@ -362,15 +385,15 @@ else:
                     
                     col_w1, col_w2 = st.columns(2)
                     with col_w1:
-                        w_tick = st.checkbox(f"Worker: Completed / Fixed #{idx+1}", value=r.get("worker_done", False), key=f"w_chk_{job.get('job_id')}_{idx}")
-                        action_txt = st.text_input(f"Action Taken #{idx+1}", value=r.get("action", ""), key=f"act_{job.get('job_id')}_{idx}", placeholder="e.g. Re-welded and ground smooth")
+                        w_tick = st.checkbox(f"Worker: Completed / Fixed #{idx+1}", value=r.get("worker_done", False), key=f"w_chk_{record_id}_{idx}")
+                        action_txt = st.text_input(f"Action Taken #{idx+1}", value=r.get("action", ""), key=f"act_{record_id}_{idx}", placeholder="e.g. Re-welded and ground smooth")
                         r["worker_done"] = w_tick
                         r["action"] = action_txt
 
                     with col_w2:
-                        fixed_photo_file = st.file_uploader(f"Upload Fixed Photo #{idx+1} (Optional)", type=["jpg", "jpeg", "png"], key=f"fixed_img_{job.get('job_id')}_{idx}")
+                        fixed_photo_file = st.file_uploader(f"Upload Fixed Photo #{idx+1} (Optional)", type=["jpg", "jpeg", "png"], key=f"fixed_img_{record_id}_{idx}")
                         if fixed_photo_file:
-                            fixed_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_fixed_{idx+1}.png")
+                            fixed_path = os.path.join(PHOTOS_DIR, f"{record_id}_fixed_{idx+1}.png")
                             with open(fixed_path, "wb") as f:
                                 f.write(fixed_photo_file.getbuffer())
                             r["fixed_photo"] = fixed_path
@@ -385,15 +408,15 @@ else:
 
             # QC LOG COMMENT
             st.markdown("#### 🔍 QC Inspector: Log Comment / Defect for this Job")
-            with st.form(f"qc_add_defect_{job.get('job_id')}", clear_on_submit=True):
-                defect_text = st.text_area("Defect / Rectification Note", placeholder="Describe issue: weld gap, misaligned holes, paint run...", key=f"def_txt_{job.get('job_id')}")
-                photo_file = st.file_uploader("Upload Inspection / Defect Photo (Optional)", type=["jpg", "jpeg", "png"], key=f"def_img_{job.get('job_id')}")
+            with st.form(f"qc_add_defect_{record_id}", clear_on_submit=True):
+                defect_text = st.text_area("Defect / Rectification Note", placeholder="Describe issue: weld gap, misaligned holes, paint run...", key=f"def_txt_{record_id}")
+                photo_file = st.file_uploader("Upload Inspection / Defect Photo (Optional)", type=["jpg", "jpeg", "png"], key=f"def_img_{record_id}")
                 add_defect_btn = st.form_submit_button("➕ Submit Rectification Issue")
                 
                 if add_defect_btn and defect_text:
                     photo_path = ""
                     if photo_file:
-                        photo_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_defect_{len(rects)+1}.png")
+                        photo_path = os.path.join(PHOTOS_DIR, f"{record_id}_defect_{len(rects)+1}.png")
                         with open(photo_path, "wb") as f:
                             f.write(photo_file.getbuffer())
 
@@ -413,9 +436,9 @@ else:
             # QC APPROVAL PHOTO GATE
             st.write("---")
             st.markdown("#### 🛡️ QC Final Clearance Photo (Required for Job Completion)")
-            qc_appr_file = st.file_uploader(f"📸 Upload QC Approval Photo / Sign ({job.get('job_id')})", type=["jpg", "jpeg", "png"], key=f"qc_appr_{job.get('job_id')}")
+            qc_appr_file = st.file_uploader(f"📸 Upload QC Approval Photo / Sign ({job.get('job_id')})", type=["jpg", "jpeg", "png"], key=f"qc_appr_{record_id}")
             if qc_appr_file:
-                appr_path = os.path.join(PHOTOS_DIR, f"{job.get('job_id')}_qc_approval.png")
+                appr_path = os.path.join(PHOTOS_DIR, f"{record_id}_qc_approval.png")
                 with open(appr_path, "wb") as f:
                     f.write(qc_appr_file.getbuffer())
                 job["qc_final_approval_photo"] = appr_path
@@ -437,11 +460,11 @@ else:
                 if not qc_photo_uploaded:
                     missing_items.append("QC Approval Photo must be uploaded")
                 st.warning(f"🔒 Completion Locked: {', and '.join(missing_items)}.")
-                st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", disabled=True, key=f"dis_comp_{job.get('job_id')}")
-                st.button(f"Submit Final Job ({job.get('job_id')})", disabled=True, key=f"dis_btn_{job.get('job_id')}")
+                st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", disabled=True, key=f"dis_comp_{record_id}")
+                st.button(f"Submit Final Job ({job.get('job_id')})", disabled=True, key=f"dis_btn_{record_id}")
             else:
-                is_comp = st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", key=f"comp_{job.get('job_id')}")
-                if st.button(f"Submit Final Job ({job.get('job_id')})", key=f"sub_{job.get('job_id')}"):
+                is_comp = st.checkbox(f"✅ Mark Job as COMPLETED ({job.get('job_id')})", key=f"comp_{record_id}")
+                if st.button(f"Submit Final Job ({job.get('job_id')})", key=f"sub_{record_id}"):
                     if is_comp:
                         job["status"] = "Completed"
                         job["completed_time"] = get_sl_time()
@@ -453,24 +476,24 @@ else:
 
             # DELETE WITH CONFIRMATION
             st.write("---")
-            act_del_key = f"active_{job.get('job_id')}"
+            act_del_key = f"active_{record_id}"
             
             if st.session_state.delete_confirm_id == act_del_key:
                 st.error(f"⚠️ Are you sure you want to delete ongoing job **{job.get('job_id')}**?")
                 conf_c1, conf_c2 = st.columns(2)
                 with conf_c1:
-                    if st.button("Yes, Delete Job", key=f"act_yes_{job.get('job_id')}"):
-                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != job.get("job_id")]
+                    if st.button("Yes, Delete Job", key=f"act_yes_{record_id}"):
+                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("record_id") != record_id]
                         save_data(st.session_state.jobs_db)
                         st.session_state.delete_confirm_id = None
                         st.success(f"Job {job.get('job_id')} permanently deleted!")
                         st.rerun()
                 with conf_c2:
-                    if st.button("No, Cancel", key=f"act_no_{job.get('job_id')}"):
+                    if st.button("No, Cancel", key=f"act_no_{record_id}"):
                         st.session_state.delete_confirm_id = None
                         st.rerun()
             else:
-                if st.button(f"🗑️ Delete This Job ({job.get('job_id')})", key=f"act_del_btn_{job.get('job_id')}"):
+                if st.button(f"🗑️ Delete This Job ({job.get('job_id')})", key=f"act_del_btn_{record_id}"):
                     st.session_state.delete_confirm_id = act_del_key
                     st.rerun()
 
@@ -483,13 +506,16 @@ if not completed_jobs:
     st.caption("No completed jobs yet.")
 else:
     for c_idx, c_job in enumerate(completed_jobs):
+        record_id = c_job.get("record_id") or make_record_id()
+        if not c_job.get("record_id"):
+            c_job["record_id"] = record_id
         c_rects = c_job.get("rectifications", [])
         with st.expander(f"🟢 {c_job.get('job_id', '')} - {c_job.get('worker', '')} (COMPLETED)"):
             st.write(f"**Description:** {c_job.get('desc', '')}")
             st.write(f"**Completed At:** {c_job.get('completed_time', 'N/A')}")
             st.write(f"**Rectifications Cleared:** {len(c_rects)} items.")
             
-            direct_qr_url = f"{PUBLIC_DOMAIN}/?verify_job={c_job.get('job_id', '')}"
+            direct_qr_url = f"{PUBLIC_DOMAIN}/?verify_job={record_id}"
             
             # 1. SHOW QR CODE ON SCREEN
             st.write("---")
@@ -506,7 +532,7 @@ else:
                     data=qr_bytes,
                     file_name=f"TPL_{c_job.get('job_id')}_QR.png",
                     mime="image/png",
-                    key=f"qr_dl_{c_job.get('job_id')}_{c_idx}"
+                    key=f"qr_dl_{record_id}_{c_idx}"
                 )
 
             st.write("---")
@@ -514,8 +540,8 @@ else:
             # 2. ACTION BUTTONS: VIEW CERTIFICATE / PRINT PDF / DELETE
             btn_col1, btn_col2, btn_col3 = st.columns([1.2, 1.5, 1])
             with btn_col1:
-                if st.button(f"👁️ View Certificate", key=f"view_{c_job.get('job_id', '')}_{c_idx}"):
-                    st.query_params["verify_job"] = c_job.get('job_id', '')
+                if st.button(f"👁️ View Certificate", key=f"view_{record_id}_{c_idx}"):
+                    st.query_params["verify_job"] = record_id
                     st.rerun()
 
             with btn_col2:
@@ -525,28 +551,28 @@ else:
                     data=pdf_bytes,
                     file_name=f"TPL_{c_job.get('job_id', '')}_Certificate.pdf",
                     mime="application/pdf",
-                    key=f"dl_{c_job.get('job_id', '')}_{c_idx}"
+                    key=f"dl_{record_id}_{c_idx}"
                 )
 
             with btn_col3:
-                comp_del_key = f"completed_{c_job.get('job_id')}"
-                if st.button(f"🗑️ Delete", key=f"del_btn_{c_job.get('job_id', '')}_{c_idx}"):
+                comp_del_key = f"completed_{record_id}"
+                if st.button(f"🗑️ Delete", key=f"del_btn_{record_id}_{c_idx}"):
                     st.session_state.delete_confirm_id = comp_del_key
                     st.rerun()
 
             # Delete Confirmation Box
-            if st.session_state.delete_confirm_id == f"completed_{c_job.get('job_id')}":
+            if st.session_state.delete_confirm_id == f"completed_{record_id}":
                 st.write("")
                 st.error(f"⚠️ Are you sure you want to delete completed record **{c_job.get('job_id')}**?")
                 conf_c1, conf_c2 = st.columns(2)
                 with conf_c1:
-                    if st.button("Yes, Delete Record", key=f"comp_yes_{c_job.get('job_id')}"):
-                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("job_id") != c_job.get("job_id")]
+                    if st.button("Yes, Delete Record", key=f"comp_yes_{record_id}"):
+                        st.session_state.jobs_db = [j for j in st.session_state.jobs_db if j.get("record_id") != record_id]
                         save_data(st.session_state.jobs_db)
                         st.session_state.delete_confirm_id = None
                         st.success(f"Job {c_job.get('job_id')} permanently deleted!")
                         st.rerun()
                 with conf_c2:
-                    if st.button("No, Cancel", key=f"comp_no_{c_job.get('job_id')}"):
+                    if st.button("No, Cancel", key=f"comp_no_{record_id}"):
                         st.session_state.delete_confirm_id = None
                         st.rerun()
