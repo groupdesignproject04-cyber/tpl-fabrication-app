@@ -1,7 +1,8 @@
 streamlit
 pandas
-reportlab
-qrcode
-Pillow
 pytz
+qrcode[pil]
+Pillow
+reportlab
+supabase
 requests
