@@ -650,132 +650,308 @@ if verify_id:
             == clean_id
         ]
 
-    st.html(
-    f"""
-    <div style="
-        background-color:#003366;
-        color:white;
-        padding:22px 14px;
-        border-radius:12px;
-        text-align:center;
-    ">
+    st.markdown(
+        """
+        <style>
+        #MainMenu,
+        footer,
+        header,
+        .stDeployButton,
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"] {
+            display:none !important;
+        }
 
-        <h2 style="
-            margin:0;
-            color:white;
-            letter-spacing:1.2px;
-            font-size:21px;
-            font-weight:800;
-        ">
-            TRADE PROMOTERS LIMITED
-        </h2>
+        .block-container {
+            padding-top:1rem !important;
+            padding-bottom:2rem !important;
+            max-width:680px !important;
+        }
 
-        <p style="
-            margin:5px 0 0 0;
-            font-size:11px;
-            color:#93c5fd;
-            letter-spacing:.8px;
-            text-transform:uppercase;
-        ">
-            GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE
-        </p>
+        body {
+            background-color:#f8fafc;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
-        <div style="margin-top:12px;">
-
-            <span style="
-                background:#16a34a;
-                color:white;
-                padding:5px 16px;
-                border-radius:20px;
-                font-weight:bold;
-                font-size:12px;
-                display:inline-block;
-            ">
-                ✓ QUALITY VERIFIED &amp; COMPLETED
-            </span>
-
-        </div>
-
-    </div>
-    """
-)
     if matched:
 
         job = matched[0]
 
-       st.html(
-    f"""
-    <div style="
-        background:white;
-        border-radius:10px;
-        padding:14px;
-        border:1px solid #e2e8f0;
-        margin-bottom:15px;
-    ">
+        st.markdown(
+            f"""
+            <div style="
+                background-color:#003366;
+                color:white;
+                padding:22px 14px;
+                border-radius:12px;
+                text-align:center;
+            ">
 
-        <table style="
-            width:100%;
-            font-size:13px;
-            line-height:1.8;
-        ">
-
-            <tr>
-                <td style="
-                    color:#64748b;
-                    width:45%;
+                <h2 style="
+                    margin:0;
+                    color:white;
+                    letter-spacing:1.2px;
+                    font-size:21px;
+                    font-weight:800;
                 ">
-                    Job ID:
-                </td>
+                    TRADE PROMOTERS LIMITED
+                </h2>
 
-                <td style="
-                    font-weight:bold;
-                    color:#0f172a;
+                <p style="
+                    margin:5px 0 0 0;
+                    font-size:11px;
+                    color:#93c5fd;
+                    letter-spacing:.8px;
+                    text-transform:uppercase;
                 ">
-                    {job.get('job_id','N/A')}
-                </td>
-            </tr>
+                    GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE
+                </p>
 
-            <tr>
-                <td style="color:#64748b;">
-                    Fabrication Lead:
-                </td>
+                <div style="margin-top:12px;">
 
-                <td style="
-                    font-weight:bold;
-                    color:#0f172a;
+                    <span style="
+                        background:#16a34a;
+                        color:white;
+                        padding:5px 16px;
+                        border-radius:20px;
+                        font-weight:bold;
+                        font-size:12px;
+                        display:inline-block;
+                    ">
+                        ✓ QUALITY VERIFIED &amp; COMPLETED
+                    </span>
+
+                </div>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.write("")
+
+        st.markdown(
+            f"""
+            <div style="
+                background:white;
+                border-radius:10px;
+                padding:14px;
+                border:1px solid #e2e8f0;
+                margin-bottom:15px;
+            ">
+
+                <table style="
+                    width:100%;
+                    font-size:13px;
+                    line-height:1.8;
                 ">
-                    {job.get('worker','N/A')}
-                </td>
-            </tr>
 
-            <tr>
-                <td style="color:#64748b;">
-                    Started Date/Time:
-                </td>
+                    <tr>
+                        <td style="
+                            color:#64748b;
+                            width:45%;
+                        ">
+                            Job ID:
+                        </td>
 
-                <td>
-                    {job.get('start_time','N/A')}
-                </td>
-            </tr>
+                        <td style="
+                            font-weight:bold;
+                            color:#0f172a;
+                        ">
+                            {job.get('job_id','N/A')}
+                        </td>
+                    </tr>
 
-            <tr>
-                <td style="color:#64748b;">
-                    Completed Date/Time:
-                </td>
+                    <tr>
+                        <td style="color:#64748b;">
+                            Fabrication Lead:
+                        </td>
 
-                <td style="
-                    color:#16a34a;
-                    font-weight:bold;
-                ">
-                    {job.get('completed_time','N/A')}
-                </td>
-            </tr>
+                        <td style="
+                            font-weight:bold;
+                            color:#0f172a;
+                        ">
+                            {job.get('worker','N/A')}
+                        </td>
+                    </tr>
 
-        </table>
+                    <tr>
+                        <td style="color:#64748b;">
+                            Started Date/Time:
+                        </td>
 
-    </div>
-    """
-)
+                        <td>
+                            {job.get('start_time','N/A')}
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="color:#64748b;">
+                            Completed Date/Time:
+                        </td>
+
+                        <td style="
+                            color:#16a34a;
+                            font-weight:bold;
+                        ">
+                            {job.get('completed_time','N/A')}
+                        </td>
+                    </tr>
+
+                </table>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            "##### 📋 Fabrication Scope"
+        )
+
+        st.info(
+            job.get(
+                "desc",
+                "N/A"
+            )
+        )
+
+        st.markdown(
+            "##### 🛠️ QC Rectifications & Clearances"
+        )
+
+        rects = job.get(
+            "rectifications",
+            []
+        )
+
+        if not rects:
+
+            st.success(
+                "Clean pass. Initial inspection passed with standard engineering tolerances."
+            )
+
+        else:
+
+            for idx, r in enumerate(rects):
+
+                st.markdown(
+                    f"**Defect #{idx+1}:** "
+                    f"{r.get('defect','-')}"
+                )
+
+                st.markdown(
+                    f"✓ **Action Taken:** "
+                    f"{r.get('action','-')}"
+                )
+
+                defect_photos = normalize_photo_list(
+                    r.get(
+                        "photos",
+                        r.get("photo")
+                    )
+                )
+
+                fixed_photos = normalize_photo_list(
+                    r.get(
+                        "fixed_photos",
+                        r.get("fixed_photo")
+                    )
+                )
+
+                if defect_photos:
+
+                    st.markdown(
+                        "**QC Defect Photos**"
+                    )
+
+                    st.image(
+                        defect_photos,
+                        use_container_width=True
+                    )
+
+                if fixed_photos:
+
+                    st.markdown(
+                        "**Worker Fixed Proof Photos**"
+                    )
+
+                    st.image(
+                        fixed_photos,
+                        use_container_width=True
+                    )
+
+                st.divider()
+
+        approval_photos = normalize_photo_list(
+            job.get(
+                "qc_final_approval_photos",
+                job.get(
+                    "qc_final_approval_photo"
+                )
+            )
+        )
+
+        if approval_photos:
+
+            st.markdown(
+                "##### 🔍 QC Final Clearance Sign-Off"
+            )
+
+            st.image(
+                approval_photos,
+                use_container_width=True
+            )
+
+        st.markdown(
+            """
+            <div style="
+                text-align:center;
+                font-size:11px;
+                color:#64748b;
+                margin-top:25px;
+                border-top:1px solid #cbd5e1;
+                padding-top:12px;
+            ">
+                Trade Promoters Limited • Generator Installation & QA/QC Division
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.write("---")
+
+        if st.button(
+            "⬅️ Back to Workshop Portal"
+        ):
+
+            st.query_params.clear()
+
+            st.rerun()
+
+        st.stop()
+
+    else:
+
+        st.error(
+            f"Certificate record for Job ID "
+            f"'{verify_id}' was not found."
+        )
+
+        if st.button(
+            "⬅️ Back to Portal"
+        ):
+
+            st.query_params.clear()
+
+            st.rerun()
+
+        st.stop()
+
+
 # ==========================================================
 # PDF GENERATOR
 # ==========================================================
