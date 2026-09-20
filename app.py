@@ -6,6 +6,7 @@ import io
 import os
 import json
 import uuid
+import html
 import qrcode
 from PIL import Image
 from reportlab.lib.pagesizes import letter
@@ -22,14 +23,27 @@ PUBLIC_DOMAIN = "https://tpl-fabrication-app-evtpzepaiqfnt5gkqh8brx.streamlit.ap
 
 # =======================================================
 # LOGIN CREDENTIALS
-# Change these usernames/passwords whenever you like.
-# "editor"  -> can assign jobs, log defects, upload photos, complete/delete jobs
-# "viewer"  -> read-only: can browse jobs and view/download certificates only
+# Prefer st.secrets (Settings -> Secrets on Streamlit Cloud, or
+# .streamlit/secrets.toml locally) so passwords are never in source code:
+#
+# [users.tpl_e]
+# password = "E112233"
+# role = "editor"
+#
+# [users.tpl_v]
+# password = "V0000"
+# role = "viewer"
+#
+# Falls back to the hardcoded dict below only if no secrets are configured,
+# so the app still runs locally without extra setup.
 # =======================================================
-USERS = {
-    "tpl_e": {"password": "E112233", "role": "editor"},
-    "tpl_v": {"password": "V0000", "role": "viewer"},
-}
+if "users" in st.secrets:
+    USERS = {name: dict(cfg) for name, cfg in st.secrets["users"].items()}
+else:
+    USERS = {
+        "tpl_e": {"password": "E112233", "role": "editor"},
+        "tpl_v": {"password": "V0000", "role": "viewer"},
+    }
 
 
 def get_sl_time():
@@ -39,6 +53,13 @@ def get_sl_time():
 
 def make_record_id():
     return f"REC-{uuid.uuid4().hex[:12].upper()}"
+
+
+def esc(value):
+    """HTML-escape any user-supplied text before it goes into an
+    unsafe_allow_html block or a ReportLab Paragraph, to prevent
+    stored HTML/script injection via job fields."""
+    return html.escape(str(value) if value is not None else "")
 
 
 def normalize_photo_list(value):
@@ -184,10 +205,10 @@ if verify_id:
         st.markdown(f"""
         <div style="background:white;border-radius:10px;padding:14px;border:1px solid #e2e8f0;margin-bottom:15px;">
             <table style="width:100%;font-size:13px;line-height:1.8;">
-                <tr><td style="color:#64748b;width:45%;">Job ID:</td><td style="font-weight:bold;color:#0f172a;">{job.get('job_id','N/A')}</td></tr>
-                <tr><td style="color:#64748b;">Fabrication Lead:</td><td style="font-weight:bold;color:#0f172a;">{job.get('worker','N/A')}</td></tr>
-                <tr><td style="color:#64748b;">Started Date/Time:</td><td>{job.get('start_time','N/A')}</td></tr>
-                <tr><td style="color:#64748b;">Completed Date/Time:</td><td style="color:#16a34a;font-weight:bold;">{job.get('completed_time','N/A')}</td></tr>
+                <tr><td style="color:#64748b;width:45%;">Job ID:</td><td style="font-weight:bold;color:#0f172a;">{esc(job.get('job_id','N/A'))}</td></tr>
+                <tr><td style="color:#64748b;">Fabrication Lead:</td><td style="font-weight:bold;color:#0f172a;">{esc(job.get('worker','N/A'))}</td></tr>
+                <tr><td style="color:#64748b;">Started Date/Time:</td><td>{esc(job.get('start_time','N/A'))}</td></tr>
+                <tr><td style="color:#64748b;">Completed Date/Time:</td><td style="color:#16a34a;font-weight:bold;">{esc(job.get('completed_time','N/A'))}</td></tr>
             </table>
         </div>
         """, unsafe_allow_html=True)
@@ -201,8 +222,8 @@ if verify_id:
             st.success("Clean pass. Initial inspection passed with standard engineering tolerances.")
         else:
             for idx, r in enumerate(rects):
-                st.markdown(f"**Defect #{idx+1}:** {r.get('defect','-')}")
-                st.markdown(f"✓ **Action Taken:** {r.get('action','-')}")
+                st.markdown(f"**Defect #{idx+1}:** {esc(r.get('defect','-'))}")
+                st.markdown(f"✓ **Action Taken:** {esc(r.get('action','-'))}")
                 defect_photos = normalize_photo_list(r.get("photos", r.get("photo")))
                 fixed_photos = normalize_photo_list(r.get("fixed_photos", r.get("fixed_photo")))
                 if defect_photos:
@@ -226,7 +247,7 @@ if verify_id:
             st.rerun()
         st.stop()
     else:
-        st.error(f"Certificate record for Job ID '{verify_id}' was not found.")
+        st.error(f"Certificate record for Job ID '{esc(verify_id)}' was not found.")
         if st.button("⬅️ Back to Portal"):
             st.query_params.clear()
             st.rerun()
@@ -249,14 +270,14 @@ def create_pdf(job, qr_link_url):
     elements.append(Paragraph("TRADE PROMOTERS LIMITED", title_style))
     elements.append(Paragraph("GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE", sub_style))
     job_info = [
-        [Paragraph(f"<b>Job ID:</b> {job.get('job_id','')}", cell_style), Paragraph(f"<b>Start Date/Time:</b> {job.get('start_time','')}", cell_style)],
-        [Paragraph(f"<b>Fabrication Lead:</b> {job.get('worker','')}", cell_style), Paragraph(f"<b>Completed Time:</b> {job.get('completed_time','N/A')}", cell_style)]
+        [Paragraph(f"<b>Job ID:</b> {esc(job.get('job_id',''))}", cell_style), Paragraph(f"<b>Start Date/Time:</b> {esc(job.get('start_time',''))}", cell_style)],
+        [Paragraph(f"<b>Fabrication Lead:</b> {esc(job.get('worker',''))}", cell_style), Paragraph(f"<b>Completed Time:</b> {esc(job.get('completed_time','N/A'))}", cell_style)]
     ]
     t1 = Table(job_info, colWidths=[270,270])
     t1.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor("#F4F6F8")),('PADDING',(0,0),(-1,-1),5),('GRID',(0,0),(-1,-1),0.5,colors.HexColor("#D2D6DC"))]))
     elements.append(t1); elements.append(Spacer(1,8))
 
-    scope_info = [[Paragraph("<b>Job Scope / Fabrication Details:</b>", header_cell)], [Paragraph(job.get("desc",""), cell_style)]]
+    scope_info = [[Paragraph("<b>Job Scope / Fabrication Details:</b>", header_cell)], [Paragraph(esc(job.get("desc","")), cell_style)]]
     t_scope = Table(scope_info, colWidths=[540])
     t_scope.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor("#E2E8F0")),('PADDING',(0,0),(-1,-1),5),('GRID',(0,0),(-1,-1),0.5,colors.HexColor("#E5E7EB"))]))
     elements.append(t_scope); elements.append(Spacer(1,8))
@@ -265,7 +286,7 @@ def create_pdf(job, qr_link_url):
     if rects:
         rect_rows = [[Paragraph("<b>QC Rectification Audit Log &amp; Photo Proofs:</b>", header_cell)]]
         for i, r in enumerate(rects):
-            rect_rows.append([Paragraph(f"<b>Issue #{i+1}:</b> {r.get('defect','')}<br/><b>Worker Action:</b> {r.get('action','')} - <font color='green'><b>[Fixed &amp; Cleared]</b></font>", cell_style)])
+            rect_rows.append([Paragraph(f"<b>Issue #{i+1}:</b> {esc(r.get('defect',''))}<br/><b>Worker Action:</b> {esc(r.get('action',''))} - <font color='green'><b>[Fixed &amp; Cleared]</b></font>", cell_style)])
             defect_paths = [p for p in normalize_photo_list(r.get("photos", r.get("photo"))) if os.path.exists(p)]
             fixed_paths = [p for p in normalize_photo_list(r.get("fixed_photos", r.get("fixed_photo"))) if os.path.exists(p)]
             photo_cells = []
@@ -370,7 +391,9 @@ if is_editor:
         assign_btn = st.form_submit_button("Assign Job")
         if assign_btn and new_job_id and new_desc and new_worker:
             existing_ids = [j.get("job_id", "").strip().lower() for j in st.session_state.jobs_db]
-            if new_job_id.strip().lower() in existing_ids:
+            if not new_job_id.strip():
+                st.error("Job ID cannot be blank or whitespace only.")
+            elif new_job_id.strip().lower() in existing_ids:
                 st.error(f"Job ID '{new_job_id}' already exists. Please use a unique Job ID.")
             else:
                 st.session_state.jobs_db.append({
