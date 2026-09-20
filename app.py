@@ -6,6 +6,7 @@ import io
 import os
 import json
 import uuid
+import html
 import qrcode
 import requests
 
@@ -69,19 +70,46 @@ PUBLIC_DOMAIN = (
 
 # ==========================================================
 # LOGIN CREDENTIALS
+# Prefer st.secrets (Streamlit Cloud -> Settings -> Secrets):
+#
+# [users.tpl_e]
+# password = "E112233"
+# role = "editor"
+#
+# [users.tpl_v]
+# password = "V0000"
+# role = "viewer"
+#
+# Falls back to the hardcoded dict only if no secrets are set,
+# so the app still runs locally without extra setup.
 # ==========================================================
 
-USERS = {
-    "tpl_e": {
-        "password": "E112233",
-        "role": "editor"
-    },
+if "users" in st.secrets:
+    USERS = {name: dict(cfg) for name, cfg in st.secrets["users"].items()}
+else:
+    USERS = {
+        "tpl_e": {
+            "password": "E112233",
+            "role": "editor"
+        },
 
-    "tpl_v": {
-        "password": "V0000",
-        "role": "viewer"
-    },
-}
+        "tpl_v": {
+            "password": "V0000",
+            "role": "viewer"
+        },
+    }
+
+
+# ==========================================================
+# HTML ESCAPE HELPER
+# Escapes any user-supplied text before it is placed inside an
+# unsafe_allow_html block or a ReportLab Paragraph, so a job
+# description / defect note etc. can never inject HTML/script
+# tags or break ReportLab's mini-markup parser.
+# ==========================================================
+
+def esc(value):
+    return html.escape(str(value)) if value is not None else ""
 
 
 # ==========================================================
@@ -650,167 +678,49 @@ if verify_id:
             == clean_id
         ]
 
-    st.markdown(
-        """
-        <style>
-        #MainMenu,
-        footer,
-        header,
-        .stDeployButton,
-        [data-testid="stToolbar"],
-        [data-testid="stDecoration"] {
-            display:none !important;
-        }
-
-        .block-container {
-            padding-top:1rem !important;
-            padding-bottom:2rem !important;
-            max-width:680px !important;
-        }
-
-        body {
-            background-color:#f8fafc;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+    st.markdown("""
+    <style>
+        #MainMenu, footer, header, .stDeployButton, [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
+        .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 680px !important;}
+        body {background-color: #f8fafc;}
+    </style>
+    """, unsafe_allow_html=True)
 
     if matched:
 
         job = matched[0]
 
-        st.markdown(
-            f"""
-            <div style="
-                background-color:#003366;
-                color:white;
-                padding:22px 14px;
-                border-radius:12px;
-                text-align:center;
-            ">
-
-                <h2 style="
-                    margin:0;
-                    color:white;
-                    letter-spacing:1.2px;
-                    font-size:21px;
-                    font-weight:800;
-                ">
-                    TRADE PROMOTERS LIMITED
-                </h2>
-
-                <p style="
-                    margin:5px 0 0 0;
-                    font-size:11px;
-                    color:#93c5fd;
-                    letter-spacing:.8px;
-                    text-transform:uppercase;
-                ">
-                    GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE
-                </p>
-
-                <div style="margin-top:12px;">
-
-                    <span style="
-                        background:#16a34a;
-                        color:white;
-                        padding:5px 16px;
-                        border-radius:20px;
-                        font-weight:bold;
-                        font-size:12px;
-                        display:inline-block;
-                    ">
-                        ✓ QUALITY VERIFIED &amp; COMPLETED
-                    </span>
-
-                </div>
-
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        # NOTE: these HTML blocks are intentionally kept as ONE
+        # compact block with no blank lines and no per-attribute
+        # indentation. Streamlit's markdown renderer treats a
+        # blank line inside unsafe_allow_html content as the end
+        # of the HTML block, and 4+ space indentation as a literal
+        # code block - either one causes the raw tags to print as
+        # plain text instead of rendering. Keep this style if you
+        # edit it, and turn off any editor "format on save" for
+        # this file.
+        st.markdown(f"""
+        <div style="background-color:#003366;color:white;padding:22px 14px;border-radius:12px;text-align:center;">
+            <h2 style="margin:0;color:#ffffff;letter-spacing:1.2px;font-size:21px;font-weight:800;">TRADE PROMOTERS LIMITED</h2>
+            <p style="margin:5px 0 0 0;font-size:11px;color:#93c5fd;letter-spacing:.8px;text-transform:uppercase;">GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE</p>
+            <div style="margin-top:12px;"><span style="background:#16a34a;color:white;padding:5px 16px;border-radius:20px;font-weight:bold;font-size:12px;display:inline-block;">✓ QUALITY VERIFIED &amp; COMPLETED</span></div>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.write("")
 
-        st.markdown(
-            f"""
-            <div style="
-                background:white;
-                border-radius:10px;
-                padding:14px;
-                border:1px solid #e2e8f0;
-                margin-bottom:15px;
-            ">
+        st.markdown(f"""
+        <div style="background:white;border-radius:10px;padding:14px;border:1px solid #e2e8f0;margin-bottom:15px;">
+            <table style="width:100%;font-size:13px;line-height:1.8;">
+                <tr><td style="color:#64748b;width:45%;">Job ID:</td><td style="font-weight:bold;color:#0f172a;">{esc(job.get('job_id','N/A'))}</td></tr>
+                <tr><td style="color:#64748b;">Fabrication Lead:</td><td style="font-weight:bold;color:#0f172a;">{esc(job.get('worker','N/A'))}</td></tr>
+                <tr><td style="color:#64748b;">Started Date/Time:</td><td>{esc(job.get('start_time','N/A'))}</td></tr>
+                <tr><td style="color:#64748b;">Completed Date/Time:</td><td style="color:#16a34a;font-weight:bold;">{esc(job.get('completed_time','N/A'))}</td></tr>
+            </table>
+        </div>
+        """, unsafe_allow_html=True)
 
-                <table style="
-                    width:100%;
-                    font-size:13px;
-                    line-height:1.8;
-                ">
-
-                    <tr>
-                        <td style="
-                            color:#64748b;
-                            width:45%;
-                        ">
-                            Job ID:
-                        </td>
-
-                        <td style="
-                            font-weight:bold;
-                            color:#0f172a;
-                        ">
-                            {job.get('job_id','N/A')}
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:#64748b;">
-                            Fabrication Lead:
-                        </td>
-
-                        <td style="
-                            font-weight:bold;
-                            color:#0f172a;
-                        ">
-                            {job.get('worker','N/A')}
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:#64748b;">
-                            Started Date/Time:
-                        </td>
-
-                        <td>
-                            {job.get('start_time','N/A')}
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:#64748b;">
-                            Completed Date/Time:
-                        </td>
-
-                        <td style="
-                            color:#16a34a;
-                            font-weight:bold;
-                        ">
-                            {job.get('completed_time','N/A')}
-                        </td>
-                    </tr>
-
-                </table>
-
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.markdown(
-            "##### 📋 Fabrication Scope"
-        )
+        st.markdown("##### 📋 Fabrication Scope")
 
         st.info(
             job.get(
@@ -819,9 +729,7 @@ if verify_id:
             )
         )
 
-        st.markdown(
-            "##### 🛠️ QC Rectifications & Clearances"
-        )
+        st.markdown("##### 🛠️ QC Rectifications & Clearances")
 
         rects = job.get(
             "rectifications",
@@ -838,15 +746,9 @@ if verify_id:
 
             for idx, r in enumerate(rects):
 
-                st.markdown(
-                    f"**Defect #{idx+1}:** "
-                    f"{r.get('defect','-')}"
-                )
+                st.markdown(f"**Defect #{idx+1}:** {esc(r.get('defect','-'))}")
 
-                st.markdown(
-                    f"✓ **Action Taken:** "
-                    f"{r.get('action','-')}"
-                )
+                st.markdown(f"✓ **Action Taken:** {esc(r.get('action','-'))}")
 
                 defect_photos = normalize_photo_list(
                     r.get(
@@ -906,21 +808,7 @@ if verify_id:
                 use_container_width=True
             )
 
-        st.markdown(
-            """
-            <div style="
-                text-align:center;
-                font-size:11px;
-                color:#64748b;
-                margin-top:25px;
-                border-top:1px solid #cbd5e1;
-                padding-top:12px;
-            ">
-                Trade Promoters Limited • Generator Installation & QA/QC Division
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        st.markdown("<div style='text-align:center;font-size:11px;color:#64748b;margin-top:25px;border-top:1px solid #cbd5e1;padding-top:12px;'>Trade Promoters Limited • Generator Installation &amp; QA/QC Division</div>", unsafe_allow_html=True)
 
         st.write("---")
 
@@ -936,10 +824,7 @@ if verify_id:
 
     else:
 
-        st.error(
-            f"Certificate record for Job ID "
-            f"'{verify_id}' was not found."
-        )
+        st.error(f"Certificate record for Job ID '{esc(verify_id)}' was not found.")
 
         if st.button(
             "⬅️ Back to Portal"
@@ -1030,28 +915,24 @@ def create_pdf(
     job_info = [
         [
             Paragraph(
-                f"<b>Job ID:</b> "
-                f"{job.get('job_id','')}",
+                f"<b>Job ID:</b> {esc(job.get('job_id',''))}",
                 cell_style
             ),
 
             Paragraph(
-                f"<b>Start Date/Time:</b> "
-                f"{job.get('start_time','')}",
+                f"<b>Start Date/Time:</b> {esc(job.get('start_time',''))}",
                 cell_style
             )
         ],
 
         [
             Paragraph(
-                f"<b>Fabrication Lead:</b> "
-                f"{job.get('worker','')}",
+                f"<b>Fabrication Lead:</b> {esc(job.get('worker',''))}",
                 cell_style
             ),
 
             Paragraph(
-                f"<b>Completed Time:</b> "
-                f"{job.get('completed_time','N/A')}",
+                f"<b>Completed Time:</b> {esc(job.get('completed_time','N/A'))}",
                 cell_style
             )
         ]
@@ -1106,10 +987,7 @@ def create_pdf(
 
         [
             Paragraph(
-                job.get(
-                    "desc",
-                    ""
-                ),
+                esc(job.get("desc", "")),
                 cell_style
             )
         ]
@@ -1164,7 +1042,7 @@ def create_pdf(
         rect_rows = [
             [
                 Paragraph(
-                    "<b>QC Rectification Audit Log & Photo Proofs:</b>",
+                    "<b>QC Rectification Audit Log &amp; Photo Proofs:</b>",
                     header_cell
                 )
             ]
@@ -1175,17 +1053,9 @@ def create_pdf(
             rect_rows.append(
                 [
                     Paragraph(
-                        f"""
-                        <b>Issue #{i+1}:</b>
-                        {r.get('defect','')}
-                        <br/>
-                        <b>Worker Action:</b>
-                        {r.get('action','')}
-                        -
-                        <font color='green'>
-                        <b>[Fixed & Cleared]</b>
-                        </font>
-                        """,
+                        f"<b>Issue #{i+1}:</b> {esc(r.get('defect',''))}"
+                        f"<br/><b>Worker Action:</b> {esc(r.get('action',''))}"
+                        f" - <font color='green'><b>[Fixed &amp; Cleared]</b></font>",
                         cell_style
                     )
                 ]
@@ -1816,7 +1686,13 @@ if is_editor:
                 for j in st.session_state.jobs_db
             ]
 
-            if (
+            if not new_job_id.strip():
+
+                st.error(
+                    "Job ID cannot be blank or whitespace only."
+                )
+
+            elif (
                 new_job_id
                 .strip()
                 .lower()
