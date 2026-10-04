@@ -6,7 +6,6 @@ import io
 import os
 import json
 import uuid
-import html
 import qrcode
 import requests
 
@@ -63,6 +62,10 @@ except Exception as e:
 JOBS_TABLE = "tpl_jobs"
 PHOTO_BUCKET = "tpl-photos"
 
+# IMPORTANT: Existing tpl_jobs/job_data records are preserved.
+# This update adds a separate notifications table only; it does not
+# replace or migrate existing job records.
+
 PUBLIC_DOMAIN = (
     "https://tpl-fabrication-app-evtpzepaiqfnt5gkqh8brx.streamlit.app"
 )
@@ -70,46 +73,28 @@ PUBLIC_DOMAIN = (
 
 # ==========================================================
 # LOGIN CREDENTIALS
-# Prefer st.secrets (Streamlit Cloud -> Settings -> Secrets):
-#
-# [users.tpl_e]
-# password = "E112233"
-# role = "editor"
-#
-# [users.tpl_v]
-# password = "V0000"
-# role = "viewer"
-#
-# Falls back to the hardcoded dict only if no secrets are set,
-# so the app still runs locally without extra setup.
 # ==========================================================
 
-if "users" in st.secrets:
-    USERS = {name: dict(cfg) for name, cfg in st.secrets["users"].items()}
-else:
-    USERS = {
-        "tpl_e": {
-            "password": "E112233",
-            "role": "editor"
-        },
+USERS = {
+    # Existing editor account is retained as Admin so the existing
+    # login/password continues to work.
+    "tpl_e": {
+        "password": "E112233",
+        "role": "admin"
+    },
 
-        "tpl_v": {
-            "password": "V0000",
-            "role": "viewer"
-        },
-    }
+    "tpl_qc": {
+        "password": "QC0000",
+        "role": "qc"
+    },
 
+    "tpl_v": {
+        "password": "V0000",
+        "role": "viewer"
+    },
+}
 
-# ==========================================================
-# HTML ESCAPE HELPER
-# Escapes any user-supplied text before it is placed inside an
-# unsafe_allow_html block or a ReportLab Paragraph, so a job
-# description / defect note etc. can never inject HTML/script
-# tags or break ReportLab's mini-markup parser.
-# ==========================================================
-
-def esc(value):
-    return html.escape(str(value)) if value is not None else ""
+NOTIFICATIONS_TABLE = "notifications"
 
 
 # ==========================================================
@@ -291,6 +276,92 @@ def save_job(job):
         st.error(
             f"❌ Database save failed:\n\n{e}"
         )
+
+        return False
+
+
+# ==========================================================
+# NOTIFICATIONS
+# ==========================================================
+
+def create_notification(recipient_username, title, message, job=None, notification_type="general"):
+
+    payload = {
+        "recipient_username": recipient_username,
+        "title": title,
+        "message": message,
+        "job_record_id": (job or {}).get("record_id"),
+        "job_id": (job or {}).get("job_id"),
+        "notification_type": notification_type,
+        "is_read": False,
+        "created_at": datetime.now(pytz.UTC).isoformat()
+    }
+
+    try:
+
+        supabase.table(NOTIFICATIONS_TABLE).insert(payload).execute()
+        return True
+
+    except Exception:
+
+        # Notifications are supplementary. A notification failure must
+        # never prevent an existing job from being saved.
+        return False
+
+
+def notify_users(usernames, title, message, job=None, notification_type="general"):
+
+    for username in usernames:
+        if username:
+            create_notification(
+                username,
+                title,
+                message,
+                job,
+                notification_type
+            )
+
+
+def get_usernames_by_role(role):
+
+    return [
+        username
+        for username, info in USERS.items()
+        if info.get("role") == role
+    ]
+
+
+def load_notifications(username):
+
+    try:
+
+        response = (
+            supabase
+            .table(NOTIFICATIONS_TABLE)
+            .select("*")
+            .eq("recipient_username", username)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+
+        return response.data or []
+
+    except Exception:
+
+        return []
+
+
+def mark_notification_read(notification_id):
+
+    try:
+
+        supabase.table(NOTIFICATIONS_TABLE).update({
+            "is_read": True
+        }).eq("id", notification_id).execute()
+        return True
+
+    except Exception:
 
         return False
 
@@ -678,49 +749,167 @@ if verify_id:
             == clean_id
         ]
 
-    st.markdown("""
-    <style>
-        #MainMenu, footer, header, .stDeployButton, [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
-        .block-container {padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 680px !important;}
-        body {background-color: #f8fafc;}
-    </style>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+        #MainMenu,
+        footer,
+        header,
+        .stDeployButton,
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"] {
+            display:none !important;
+        }
+
+        .block-container {
+            padding-top:1rem !important;
+            padding-bottom:2rem !important;
+            max-width:680px !important;
+        }
+
+        body {
+            background-color:#f8fafc;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
     if matched:
 
         job = matched[0]
 
-        # NOTE: these HTML blocks are intentionally kept as ONE
-        # compact block with no blank lines and no per-attribute
-        # indentation. Streamlit's markdown renderer treats a
-        # blank line inside unsafe_allow_html content as the end
-        # of the HTML block, and 4+ space indentation as a literal
-        # code block - either one causes the raw tags to print as
-        # plain text instead of rendering. Keep this style if you
-        # edit it, and turn off any editor "format on save" for
-        # this file.
-        st.markdown(f"""
-        <div style="background-color:#003366;color:white;padding:22px 14px;border-radius:12px;text-align:center;">
-            <h2 style="margin:0;color:#ffffff;letter-spacing:1.2px;font-size:21px;font-weight:800;">TRADE PROMOTERS LIMITED</h2>
-            <p style="margin:5px 0 0 0;font-size:11px;color:#93c5fd;letter-spacing:.8px;text-transform:uppercase;">GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE</p>
-            <div style="margin-top:12px;"><span style="background:#16a34a;color:white;padding:5px 16px;border-radius:20px;font-weight:bold;font-size:12px;display:inline-block;">✓ QUALITY VERIFIED &amp; COMPLETED</span></div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style="
+                background-color:#003366;
+                color:white;
+                padding:22px 14px;
+                border-radius:12px;
+                text-align:center;
+            ">
+
+                <h2 style="
+                    margin:0;
+                    color:white;
+                    letter-spacing:1.2px;
+                    font-size:21px;
+                    font-weight:800;
+                ">
+                    TRADE PROMOTERS LIMITED
+                </h2>
+
+                <p style="
+                    margin:5px 0 0 0;
+                    font-size:11px;
+                    color:#93c5fd;
+                    letter-spacing:.8px;
+                    text-transform:uppercase;
+                ">
+                    GENERATOR FABRICATION QA/QC CLEARANCE CERTIFICATE
+                </p>
+
+                <div style="margin-top:12px;">
+
+                    <span style="
+                        background:#16a34a;
+                        color:white;
+                        padding:5px 16px;
+                        border-radius:20px;
+                        font-weight:bold;
+                        font-size:12px;
+                        display:inline-block;
+                    ">
+                        ✓ QUALITY VERIFIED &amp; COMPLETED
+                    </span>
+
+                </div>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         st.write("")
 
-        st.markdown(f"""
-        <div style="background:white;border-radius:10px;padding:14px;border:1px solid #e2e8f0;margin-bottom:15px;">
-            <table style="width:100%;font-size:13px;line-height:1.8;">
-                <tr><td style="color:#64748b;width:45%;">Job ID:</td><td style="font-weight:bold;color:#0f172a;">{esc(job.get('job_id','N/A'))}</td></tr>
-                <tr><td style="color:#64748b;">Fabrication Lead:</td><td style="font-weight:bold;color:#0f172a;">{esc(job.get('worker','N/A'))}</td></tr>
-                <tr><td style="color:#64748b;">Started Date/Time:</td><td>{esc(job.get('start_time','N/A'))}</td></tr>
-                <tr><td style="color:#64748b;">Completed Date/Time:</td><td style="color:#16a34a;font-weight:bold;">{esc(job.get('completed_time','N/A'))}</td></tr>
-            </table>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style="
+                background:white;
+                border-radius:10px;
+                padding:14px;
+                border:1px solid #e2e8f0;
+                margin-bottom:15px;
+            ">
 
-        st.markdown("##### 📋 Fabrication Scope")
+                <table style="
+                    width:100%;
+                    font-size:13px;
+                    line-height:1.8;
+                ">
+
+                    <tr>
+                        <td style="
+                            color:#64748b;
+                            width:45%;
+                        ">
+                            Job ID:
+                        </td>
+
+                        <td style="
+                            font-weight:bold;
+                            color:#0f172a;
+                        ">
+                            {job.get('job_id','N/A')}
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="color:#64748b;">
+                            Fabrication Lead:
+                        </td>
+
+                        <td style="
+                            font-weight:bold;
+                            color:#0f172a;
+                        ">
+                            {job.get('worker','N/A')}
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="color:#64748b;">
+                            Started Date/Time:
+                        </td>
+
+                        <td>
+                            {job.get('start_time','N/A')}
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td style="color:#64748b;">
+                            Completed Date/Time:
+                        </td>
+
+                        <td style="
+                            color:#16a34a;
+                            font-weight:bold;
+                        ">
+                            {job.get('completed_time','N/A')}
+                        </td>
+                    </tr>
+
+                </table>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            "##### 📋 Fabrication Scope"
+        )
 
         st.info(
             job.get(
@@ -729,7 +918,9 @@ if verify_id:
             )
         )
 
-        st.markdown("##### 🛠️ QC Rectifications & Clearances")
+        st.markdown(
+            "##### 🛠️ QC Rectifications & Clearances"
+        )
 
         rects = job.get(
             "rectifications",
@@ -746,9 +937,15 @@ if verify_id:
 
             for idx, r in enumerate(rects):
 
-                st.markdown(f"**Defect #{idx+1}:** {esc(r.get('defect','-'))}")
+                st.markdown(
+                    f"**Defect #{idx+1}:** "
+                    f"{r.get('defect','-')}"
+                )
 
-                st.markdown(f"✓ **Action Taken:** {esc(r.get('action','-'))}")
+                st.markdown(
+                    f"✓ **Action Taken:** "
+                    f"{r.get('action','-')}"
+                )
 
                 defect_photos = normalize_photo_list(
                     r.get(
@@ -808,7 +1005,21 @@ if verify_id:
                 use_container_width=True
             )
 
-        st.markdown("<div style='text-align:center;font-size:11px;color:#64748b;margin-top:25px;border-top:1px solid #cbd5e1;padding-top:12px;'>Trade Promoters Limited • Generator Installation &amp; QA/QC Division</div>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div style="
+                text-align:center;
+                font-size:11px;
+                color:#64748b;
+                margin-top:25px;
+                border-top:1px solid #cbd5e1;
+                padding-top:12px;
+            ">
+                Trade Promoters Limited • Generator Installation & QA/QC Division
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         st.write("---")
 
@@ -824,7 +1035,10 @@ if verify_id:
 
     else:
 
-        st.error(f"Certificate record for Job ID '{esc(verify_id)}' was not found.")
+        st.error(
+            f"Certificate record for Job ID "
+            f"'{verify_id}' was not found."
+        )
 
         if st.button(
             "⬅️ Back to Portal"
@@ -915,24 +1129,28 @@ def create_pdf(
     job_info = [
         [
             Paragraph(
-                f"<b>Job ID:</b> {esc(job.get('job_id',''))}",
+                f"<b>Job ID:</b> "
+                f"{job.get('job_id','')}",
                 cell_style
             ),
 
             Paragraph(
-                f"<b>Start Date/Time:</b> {esc(job.get('start_time',''))}",
+                f"<b>Start Date/Time:</b> "
+                f"{job.get('start_time','')}",
                 cell_style
             )
         ],
 
         [
             Paragraph(
-                f"<b>Fabrication Lead:</b> {esc(job.get('worker',''))}",
+                f"<b>Fabrication Lead:</b> "
+                f"{job.get('worker','')}",
                 cell_style
             ),
 
             Paragraph(
-                f"<b>Completed Time:</b> {esc(job.get('completed_time','N/A'))}",
+                f"<b>Completed Time:</b> "
+                f"{job.get('completed_time','N/A')}",
                 cell_style
             )
         ]
@@ -987,7 +1205,10 @@ def create_pdf(
 
         [
             Paragraph(
-                esc(job.get("desc", "")),
+                job.get(
+                    "desc",
+                    ""
+                ),
                 cell_style
             )
         ]
@@ -1042,7 +1263,7 @@ def create_pdf(
         rect_rows = [
             [
                 Paragraph(
-                    "<b>QC Rectification Audit Log &amp; Photo Proofs:</b>",
+                    "<b>QC Rectification Audit Log & Photo Proofs:</b>",
                     header_cell
                 )
             ]
@@ -1053,9 +1274,17 @@ def create_pdf(
             rect_rows.append(
                 [
                     Paragraph(
-                        f"<b>Issue #{i+1}:</b> {esc(r.get('defect',''))}"
-                        f"<br/><b>Worker Action:</b> {esc(r.get('action',''))}"
-                        f" - <font color='green'><b>[Fixed &amp; Cleared]</b></font>",
+                        f"""
+                        <b>Issue #{i+1}:</b>
+                        {r.get('defect','')}
+                        <br/>
+                        <b>Worker Action:</b>
+                        {r.get('action','')}
+                        -
+                        <font color='green'>
+                        <b>[Fixed & Cleared]</b>
+                        </font>
+                        """,
                         cell_style
                     )
                 ]
@@ -1593,10 +1822,15 @@ if not st.session_state.auth_user:
 # ROLE
 # ==========================================================
 
-is_editor = (
-    st.session_state.auth_role
-    == "editor"
-)
+current_role = st.session_state.auth_role
+
+is_admin = current_role == "admin"
+is_qc = current_role == "qc"
+is_viewer = current_role == "viewer"
+
+# Kept as a compatibility flag for existing code paths.
+# Only Admin has the old full editor privileges.
+is_editor = is_admin
 
 
 with st.sidebar:
@@ -1608,7 +1842,7 @@ with st.sidebar:
 
     st.caption(
         "Role: "
-        f"{st.session_state.auth_role.capitalize()}"
+        f"{st.session_state.auth_role.upper()}"
     )
 
     if st.button(
@@ -1621,12 +1855,65 @@ with st.sidebar:
         st.rerun()
 
 
-if not is_editor:
+if is_viewer:
 
     st.info(
-        "👁️ Viewer mode: you can browse jobs "
-        "and certificates, but editing is disabled."
+        "👁️ Viewer mode: you can browse jobs and certificates, "
+        "but editing is disabled."
     )
+elif is_qc:
+
+    st.info(
+        "🔍 QC mode: you can log defects and give Final QC Clearance. "
+        "Job creation and rectification are restricted to Admin."
+    )
+
+
+# ==========================================================
+# NOTIFICATION CENTER
+# ==========================================================
+
+notifications = load_notifications(
+    st.session_state.auth_user
+)
+
+unread_count = sum(
+    1
+    for n in notifications
+    if not n.get("is_read", False)
+)
+
+with st.sidebar:
+
+    st.markdown("### 🔔 Notifications")
+
+    if unread_count:
+        st.warning(f"{unread_count} unread notification(s)")
+    else:
+        st.caption("No unread notifications")
+
+    if notifications:
+        for n_idx, note in enumerate(notifications[:10]):
+
+            icon = "🔵" if not note.get("is_read", False) else "⚪"
+
+            st.markdown(
+                f"{icon} **{note.get('title', 'Notification')}**"
+            )
+            st.caption(
+                f"{note.get('message', '')}\n"
+                f"{note.get('created_at', '')}"
+            )
+
+            if not note.get("is_read", False):
+                if st.button(
+                    "Mark as read",
+                    key=f"read_note_{note.get('id', n_idx)}"
+                ):
+                    mark_notification_read(note.get("id"))
+                    st.rerun()
+
+            st.divider()
 
 
 # ==========================================================
@@ -1686,13 +1973,7 @@ if is_editor:
                 for j in st.session_state.jobs_db
             ]
 
-            if not new_job_id.strip():
-
-                st.error(
-                    "Job ID cannot be blank or whitespace only."
-                )
-
-            elif (
+            if (
                 new_job_id
                 .strip()
                 .lower()
@@ -1728,6 +2009,15 @@ if is_editor:
 
                     st.session_state.jobs_db.append(
                         new_job
+                    )
+
+                    notify_users(
+                        get_usernames_by_role("qc")
+                        + get_usernames_by_role("viewer"),
+                        "New Job Assigned",
+                        f"New job {new_job.get('job_id')} has been assigned for fabrication/QC review.",
+                        new_job,
+                        "new_job"
                     )
 
                     st.success(
@@ -1893,13 +2183,15 @@ else:
 
                         if is_editor:
 
+                            previous_worker_done = r.get(
+                                "worker_done",
+                                False
+                            )
+
                             w_tick = st.checkbox(
                                 f"Worker: Completed / Fixed #{idx+1}",
 
-                                value=r.get(
-                                    "worker_done",
-                                    False
-                                ),
+                                value=previous_worker_done,
 
                                 key=(
                                     f"w_chk_"
@@ -1932,7 +2224,21 @@ else:
                             r["action"] = action_txt
 
                             # Save changes
-                            save_job(job)
+                            if save_job(job):
+
+                                if (
+                                    is_admin
+                                    and w_tick
+                                    and not previous_worker_done
+                                ):
+
+                                    notify_users(
+                                        get_usernames_by_role("qc"),
+                                        "Rectification Completed by Admin",
+                                        f"A rectification item was marked fixed for job {job.get('job_id')}.",
+                                        job,
+                                        "rectification_completed"
+                                    )
 
                         else:
 
@@ -2035,7 +2341,15 @@ else:
                                     fixed_paths
                                 )
 
-                                save_job(job)
+                                if save_job(job):
+
+                                    notify_users(
+                                        get_usernames_by_role("qc"),
+                                        "Rectification Updated by Admin",
+                                        f"Rectification work/photo evidence was updated for job {job.get('job_id')}.",
+                                        job,
+                                        "rectification_updated"
+                                    )
 
                                 bump_uploader_version(
                                     fixed_uploader_id
@@ -2062,12 +2376,13 @@ else:
 
             # ==================================================
             # QC DEFECT FORM
+            # Admin and QC can both log defects.
             # ==================================================
 
-            if is_editor:
+            if is_admin or is_qc:
 
                 st.markdown(
-                    "#### 🔍 QC Inspector: "
+                    "#### 🔍 Defect / QC Issue: "
                     "Log Comment / Defect for this Job"
                 )
 
@@ -2168,6 +2483,27 @@ else:
 
                         if save_job(job):
 
+                            if is_admin:
+                                recipients = (
+                                    get_usernames_by_role("qc")
+                                    + get_usernames_by_role("viewer")
+                                )
+                                title = "New Defect Added by Admin"
+                            else:
+                                recipients = (
+                                    get_usernames_by_role("admin")
+                                    + get_usernames_by_role("viewer")
+                                )
+                                title = "New Defect Added by QC"
+
+                            notify_users(
+                                recipients,
+                                title,
+                                f"A defect was logged for job {job.get('job_id')}.",
+                                job,
+                                "defect_added"
+                            )
+
                             st.success(
                                 f"Rectification issue "
                                 f"added to "
@@ -2217,7 +2553,7 @@ else:
                     st.rerun()
 
 
-            if is_editor:
+            if is_qc:
 
                 approval_uploader_id = (
                     f"qc_appr_{record_id}"
@@ -2267,7 +2603,15 @@ else:
                         "qc_final_approval_photos"
                     ] = approval_paths
 
-                    save_job(job)
+                    if save_job(job):
+
+                        notify_users(
+                            get_usernames_by_role("admin"),
+                            "Final QC Clearance Submitted",
+                            f"Final QC clearance photo(s) were submitted for job {job.get('job_id')}.",
+                            job,
+                            "final_qc_clearance"
+                        )
 
                     bump_uploader_version(
                         approval_uploader_id
@@ -2384,6 +2728,16 @@ else:
                             ] = get_sl_time()
 
                             if save_job(job):
+
+                                notify_users(
+                                    get_usernames_by_role("admin")
+                                    + get_usernames_by_role("qc")
+                                    + get_usernames_by_role("viewer"),
+                                    "Job Completed",
+                                    f"Job {job.get('job_id')} has been completed and is available in the Completed Jobs Archive.",
+                                    job,
+                                    "job_completed"
+                                )
 
                                 st.success(
                                     f"Job "
@@ -2527,6 +2881,7 @@ else:
 
 # ==========================================================
 # 3. COMPLETED JOBS
+# All roles can view/download QR and certificate documents.
 # ==========================================================
 
 st.write("---")
