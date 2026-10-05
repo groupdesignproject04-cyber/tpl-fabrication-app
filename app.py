@@ -2741,5 +2741,5 @@ else:
 
                                 st.success(
                                     f"Job "
-                                    f"{job.get('job_id')} "
+                                    f"{job.get('job_id')} ")
                                    
